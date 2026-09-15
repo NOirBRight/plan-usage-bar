@@ -79,3 +79,11 @@ _Avoid_: payload, usage JSON（实现用语）
 **Ollama Cloud**:
 Ollama 托管套餐，是 Provider。本机 `ollama` 进程不是。
 _Avoid_: Ollama（单独使用时会把本地和 Cloud 混在一起）
+
+**OpenCode Go**:
+OpenCode 的月费订阅套餐，是 Provider。OpenCode Zen 按量充值和本机 `opencode` 进程不是。
+_Avoid_: OpenCode, Zen, Go（单独使用时会和 Command Code 的 Go 套餐、Zen、本机 CLI 混在一起）
+
+**Command Code**:
+Command Code 云套餐，是 Provider。Plan Quota 是月度额度池的剩余；5 小时和 Weekly 是套在池上的节奏窗，不是池本身。
+_Avoid_: CommandCode（连写是 GitHub org，不是产品名）

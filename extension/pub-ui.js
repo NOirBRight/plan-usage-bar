@@ -15,12 +15,15 @@ import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
 const LOGIN_WAIT_SECONDS = 300;
+const PINNED_LIMIT = 6;
 const PROVIDER_NAMES = {
     claude: 'Claude',
     codex: 'Codex',
     cursor: 'Cursor',
     grok: 'Grok',
     'ollama-cloud': 'Ollama Cloud',
+    'opencode-go': 'OpenCode Go',
+    commandcode: 'Command Code',
 };
 const USAGE_URLS = {
     claude: 'https://claude.ai/settings/usage',
@@ -28,6 +31,8 @@ const USAGE_URLS = {
     cursor: 'https://cursor.com/dashboard',
     grok: 'https://grok.com/?_s=usage',
     'ollama-cloud': 'https://ollama.com',
+    'opencode-go': 'https://opencode.ai',
+    commandcode: 'https://commandcode.ai/usage',
 };
 const DEFAULT_SETTINGS = {
     remainingMode: true,
@@ -37,6 +42,8 @@ const DEFAULT_SETTINGS = {
         { id: 'cursor', enabled: true, pinned: true },
         { id: 'grok', enabled: true, pinned: true },
         { id: 'ollama-cloud', enabled: true, pinned: false },
+        { id: 'opencode-go', enabled: true, pinned: false },
+        { id: 'commandcode', enabled: true, pinned: false },
     ],
 };
 /*
@@ -71,6 +78,18 @@ const LOGIN = {
     'ollama-cloud': {
         kind: 'key', page: 'https://ollama.com/settings/keys', pageLabel: 'ollama.com',
         hint: 'Ollama API key',
+    },
+    'opencode-go': {
+        kind: 'key', page: 'https://opencode.ai/auth', pageLabel: 'opencode.ai',
+        hint: 'OpenCode Go API key',
+        cli: 'OpenCode Go', bin: 'opencode', args: ['auth', 'login'],
+        file: '~/.local/share/opencode/auth.json',
+    },
+    commandcode: {
+        kind: 'key', page: 'https://commandcode.ai/studio', pageLabel: 'commandcode.ai',
+        hint: 'Command Code API key',
+        cli: 'Command Code', bin: 'cmd', args: ['login'],
+        file: '~/.commandcode/auth.json',
     },
 };
 const FILL = { ok: '-st-accent-color', warn: '#e5a50a', crit: '#e01b24', none: 'transparent' };
@@ -553,7 +572,7 @@ const PubIndicator = GObject.registerClass({
         this._strip.add_child(control);
 
         const mode = this._settings.remainingMode;
-        for (const provider of this._snapshot.providers.filter(item => item.pinned)) {
+        for (const provider of this._snapshot.providers.filter(item => item.pinned).slice(0, PINNED_LIMIT)) {
             const failed = hasFetchError(provider);
             const stale = failed && hasValue(provider.remaining);
             const chip = new St.BoxLayout({
@@ -1075,7 +1094,7 @@ const PubIndicator = GObject.registerClass({
         });
         page.add_child(list);
         const pinnedCount = this._settings.providers.filter(item => item.enabled && item.pinned).length;
-        page.add_child(this._label(`${pinnedCount} 个在 Strip 上 · 点一行进入该 Provider 的登录与显示设置`,
+        page.add_child(this._label(`${pinnedCount} 个在 Strip 上（最多 ${PINNED_LIMIT}） · 点一行进入该 Provider 的登录与显示设置`,
             'pub-dim pub-small pub-hint', { x_expand: true, wrap: true }));
         return page;
     }
@@ -1366,7 +1385,7 @@ const PubIndicator = GObject.registerClass({
         if (paste) {
             card.add_child(title('粘贴凭据'));
             if (spec.kind === 'key')
-                card.add_child(describe('在 ollama.com 创建一个 API key，粘贴到下面。'));
+                card.add_child(describe(`在 ${spec.pageLabel} 创建一个 API key，粘贴到下面。`));
             else if (spec.kind === 'cli' && id === 'cursor')
                 card.add_child(describe('粘贴 WorkosCursorSessionToken，或 cursor-agent 登录后写入的 JWT。带 userId:: 或 JWT 即可，不必再填 user ID。'));
             else
@@ -1402,7 +1421,7 @@ const PubIndicator = GObject.registerClass({
         }
 
         const source = this._credentialSource(id, live);
-        const cliPath = spec.kind === 'cli' ? this._findCli(spec.bin) : null;
+        const cliPath = spec.bin ? this._findCli(spec.bin) : null;
         const row = acts();
         if (source !== null) {
             card.add_child(title('已登录', live?.plan));
@@ -1428,13 +1447,15 @@ const PubIndicator = GObject.registerClass({
                 if (cliPath)
                     row.add_child(this._button('在浏览器中登录 ↗', 'pub-btn-sug', () => this._startCliLogin(id)));
             } else {
-                card.add_child(describe('Ollama Cloud 用 API key。在网页里创建后粘贴即可。'));
+                card.add_child(describe(`${this._providerName(id)} 用 API key。在网页里创建后粘贴即可。`));
                 row.add_child(this._button(`打开 ${spec.pageLabel} ↗`, 'pub-btn-sug', () => {
                     this._openUri(spec.page, false);
                     this._beginPaste(id);
                 }));
             }
             row.add_child(this._button('手动粘贴…', 'pub-btn-quiet', () => this._beginPaste(id)));
+            if (spec.kind === 'key' && cliPath)
+                row.add_child(this._button('用 CLI 登录 ↗', 'pub-btn-quiet', () => this._startCliLogin(id)));
             if (this._credentials[id]?.token)
                 row.add_child(this._button('移除凭据', '', () => this._clearCredential(id)));
         }
@@ -1685,6 +1706,11 @@ const PubIndicator = GObject.registerClass({
         const setting = this._settings.providers.find(item => item.id === id);
         if (!setting || !setting.enabled)
             return;
+        if (pinned && !setting.pinned) {
+            const count = this._settings.providers.filter(item => item.enabled && item.pinned).length;
+            if (count >= PINNED_LIMIT)
+                return;
+        }
         setting.pinned = pinned;
         const live = this._snapshot.providers.find(provider => provider.id === id);
         if (live)

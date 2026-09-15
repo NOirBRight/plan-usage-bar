@@ -62,7 +62,7 @@ describe('resolveAccess', () => {
       credential: { access: 'dsh-codex', accountId: 'dsh-acct' },
     }),
     '/home/user/.dsh/grok-oauth.json': JSON.stringify({ accessToken: 'dsh-grok' }),
-    '/home/user/.dsh/.credentials.yaml': 'OLLAMA_API_KEY: dsh-ollama\n',
+    '/home/user/.dsh/.credentials.yaml': 'OLLAMA_API_KEY: dsh-ollama\nOPENCODE_API_KEY: dsh-opencode\nCOMMANDCODE_API_KEY: dsh-cmd\n',
   }
 
   it('uses credentials.json when no CLI home exists', async () => {
@@ -72,6 +72,8 @@ describe('resolveAccess', () => {
         claude: { token: 'pub-claude', plan: 'pro' },
         cursor: { token: 'pub-cursor', userId: 'pub-user' },
         'ollama-cloud': { token: 'pub-ollama' },
+        'opencode-go': { token: 'pub-go' },
+        commandcode: { token: 'pub-cmd' },
       }),
     })
     const pub = await loadPubCredentials(store, '/home/user/.config/pub')
@@ -89,6 +91,14 @@ describe('resolveAccess', () => {
       token: 'pub-ollama',
       source: 'pub',
     })
+    await expect(resolveAccess('opencode-go', store, pub['opencode-go'])).resolves.toEqual({
+      token: 'pub-go',
+      source: 'pub',
+    })
+    await expect(resolveAccess('commandcode', store, pub['commandcode'])).resolves.toEqual({
+      token: 'pub-cmd',
+      source: 'pub',
+    })
   })
 
   it('does not read DSH files', async () => {
@@ -97,6 +107,8 @@ describe('resolveAccess', () => {
     await expect(resolveAccess('cursor', store)).resolves.toBeUndefined()
     await expect(resolveAccess('grok', store)).resolves.toBeUndefined()
     await expect(resolveAccess('ollama-cloud', store)).resolves.toBeUndefined()
+    await expect(resolveAccess('opencode-go', store)).resolves.toBeUndefined()
+    await expect(resolveAccess('commandcode', store)).resolves.toBeUndefined()
   })
 
   it('falls back to official CLI homes', async () => {
@@ -183,6 +195,50 @@ describe('resolveAccess', () => {
     const store = memoryStore({}, { OLLAMA_API_KEY: 'env-ollama' })
     await expect(resolveAccess('ollama-cloud', store)).resolves.toEqual({ token: 'env-ollama', source: 'env' })
   })
+
+  it('falls back to OpenCode Go CLI auth.json then env aliases', async () => {
+    const cli = memoryStore({
+      '/home/user/.local/share/opencode/auth.json': JSON.stringify({
+        'opencode-go': { type: 'api', key: 'cli-go' },
+        opencode: { type: 'api', key: 'zen-key' },
+      }),
+    }, { OPENCODE_API_KEY: 'env-go' })
+    await expect(resolveAccess('opencode-go', cli)).resolves.toEqual({ token: 'cli-go', source: 'cli' })
+    const xdg = memoryStore({
+      '/opt/data/opencode/auth.json': JSON.stringify({
+        'opencode-go': { key: 'xdg-go' },
+      }),
+    }, { XDG_DATA_HOME: '/opt/data' })
+    await expect(resolveAccess('opencode-go', xdg)).resolves.toEqual({ token: 'xdg-go', source: 'cli' })
+    const env = memoryStore({}, { OPENCODE_GO_API_KEY: 'alias-go' })
+    await expect(resolveAccess('opencode-go', env)).resolves.toEqual({ token: 'alias-go', source: 'env' })
+    const zenOnly = memoryStore({
+      '/home/user/.local/share/opencode/auth.json': JSON.stringify({
+        opencode: { type: 'api', key: 'zen-key' },
+      }),
+    })
+    await expect(resolveAccess('opencode-go', zenOnly)).resolves.toBeUndefined()
+  })
+
+  it('falls back to Command Code CLI apiKey then env aliases and ignores BYOK keys', async () => {
+    const cli = memoryStore({
+      '/home/user/.commandcode/auth.json': JSON.stringify({
+        apiKey: 'cli-cmd',
+        anthropic: { apiKey: 'byok' },
+      }),
+    }, { COMMAND_CODE_API_KEY: 'env-cmd' })
+    await expect(resolveAccess('commandcode', cli)).resolves.toEqual({ token: 'cli-cmd', source: 'cli' })
+    const byokOnly = memoryStore({
+      '/home/user/.commandcode/auth.json': JSON.stringify({
+        anthropic: { apiKey: 'byok' },
+      }),
+    })
+    await expect(resolveAccess('commandcode', byokOnly)).resolves.toBeUndefined()
+    const official = memoryStore({}, { COMMAND_CODE_API_KEY: 'official-cmd' })
+    await expect(resolveAccess('commandcode', official)).resolves.toEqual({ token: 'official-cmd', source: 'env' })
+    const alias = memoryStore({}, { COMMANDCODE_API_KEY: 'alias-cmd' })
+    await expect(resolveAccess('commandcode', alias)).resolves.toEqual({ token: 'alias-cmd', source: 'env' })
+  })
 })
 
 describe('parseSettings', () => {
@@ -201,6 +257,8 @@ describe('parseSettings', () => {
       { id: 'claude', enabled: true, pinned: true },
       { id: 'grok', enabled: true, pinned: true },
       { id: 'ollama-cloud', enabled: true, pinned: false },
+      { id: 'opencode-go', enabled: true, pinned: false },
+      { id: 'commandcode', enabled: true, pinned: false },
     ])
   })
 
@@ -213,7 +271,7 @@ describe('parseSettings', () => {
         { id: 'future', enabled: true, pinned: true },
       ],
     }).providers.map(row => row.id)).toEqual([
-      'claude', 'future', 'codex', 'cursor', 'grok', 'ollama-cloud',
+      'claude', 'future', 'codex', 'cursor', 'grok', 'ollama-cloud', 'opencode-go', 'commandcode',
     ])
     expect(parseSettings({ providers: [] })).toEqual(DEFAULT_SETTINGS)
   })

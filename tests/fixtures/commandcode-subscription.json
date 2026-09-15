@@ -1,0 +1,9 @@
+{
+  "success": true,
+  "data": {
+    "status": "active",
+    "planId": "individual-goat",
+    "currentPeriodStart": "2026-08-26T13:06:10.000Z",
+    "currentPeriodEnd": "2026-09-26T13:06:10.000Z"
+  }
+}
