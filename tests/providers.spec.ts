@@ -120,8 +120,65 @@ describe('Ollama Cloud pull', () => {
     )
     expect(parsed.windows.map(window => window.label)).toEqual(['Monthly'])
     expect(parsed.remaining).toBeCloseTo(0.999, 6)
+    expect(parsed.windows[0]?.resetsAt).toBeUndefined()
+    expect(parsed.windows[0]?.resetLabel).toBe('Resets every 30d')
     expect(parsed.cost?.month).toBe('$0.00 · last 4 weeks')
-    expect(parsed.note).toContain('Monthly')
+    expect(parsed.note).toBeUndefined()
+  })
+
+  it('uses the Free signup anniversary as the Monthly reset', async () => {
+    const seen: string[] = []
+    const fetchImpl: FetchLike = async (url, init) => {
+      seen.push(`${init?.method ?? 'GET'} ${String(url)}`)
+      if (String(url).endsWith('/api/me')) {
+        expect(init?.method).toBe('POST')
+        return new Response(JSON.stringify({
+          CreatedAt: '2026-01-24T02:31:02.800Z',
+          Plan: 'free',
+        }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      return jsonResponse('ollama-monthly.json')
+    }
+    const parsed = await ollamaCloud.pull({ token: 'ollama-key', source: 'pub' }, fetchImpl, now)
+    expect(seen.some(row => row.startsWith('POST '))).toBe(true)
+    expect(parsed.plan).toBe('Free')
+    expect(parsed.windows[0]?.label).toBe('Monthly')
+    expect(parsed.windows[0]?.resetsAt).toBe('2026-09-24T02:31:02.800Z')
+    expect(parsed.windows[0]?.resetLabel).toBe('Resets in 10d 2h')
+  })
+
+  it('uses SubscriptionPeriodEnd for a paid Monthly window', async () => {
+    const fetchImpl: FetchLike = async (url) => {
+      if (String(url).endsWith('/api/me')) {
+        return new Response(JSON.stringify({
+          CreatedAt: '2026-01-24T02:31:02.800Z',
+          Plan: 'pro',
+          SubscriptionPeriodStart: '2026-08-20T12:00:00.000Z',
+          SubscriptionPeriodEnd: '2026-09-20T12:00:00.000Z',
+        }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      return jsonResponse('ollama-monthly.json')
+    }
+    const parsed = await ollamaCloud.pull({ token: 'ollama-key', source: 'pub' }, fetchImpl, now)
+    expect(parsed.plan).toBe('Pro')
+    expect(parsed.windows[0]?.label).toBe('Monthly')
+    expect(parsed.windows[0]?.resetsAt).toBe('2026-09-20T12:00:00.000Z')
+    expect(parsed.windows[0]?.resetLabel).toBe('Resets in 6d 11h')
+  })
+
+  it('reads reset_at aliases and falls back to the documented period', async () => {
+    const parsed = await ollamaCloud.pull(
+      { token: 'ollama-key', source: 'pub' },
+      async () => new Response(JSON.stringify({
+        limits: {
+          session: { usage: 0.1, reset_at: '2026-09-14T04:10:38.000Z' },
+          weekly: { usage: 0.2 },
+        },
+      }), { status: 200, headers: { 'content-type': 'application/json' } }),
+      now,
+    )
+    expect(parsed.windows[0]?.resetLabel).toBe('Resets in 4h 0m')
+    expect(parsed.windows[1]?.resetLabel).toBe('Resets every 7d')
   })
 
   it('draws 5-hour and Weekly when both limits exist', async () => {

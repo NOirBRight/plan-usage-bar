@@ -971,8 +971,8 @@ const PubIndicator = GObject.registerClass({
                 `pub-orow-pct${toneClass(provider.remaining)}`, { x_align: Clutter.ActorAlign.END }));
             if (stale)
                 right.add_child(this._label('上次数据', 'pub-small pub-t-crit', { x_align: Clutter.ActorAlign.END }));
-            else if (window?.resetLabel)
-                right.add_child(this._label(window.resetLabel, 'pub-dim pub-small', { x_align: Clutter.ActorAlign.END }));
+            else
+                right.add_child(this._label(window?.resetLabel || ' ', 'pub-dim pub-small', { x_align: Clutter.ActorAlign.END }));
         }
         row.add_child(right);
 
@@ -2206,19 +2206,58 @@ const PubIndicator = GObject.registerClass({
     }
 });
 
+function systemStatusIndex() {
+    const children = Main.panel._rightBox.get_children();
+    let at = -1;
+    for (const role of ['quickSettings', 'dateMenu']) {
+        const i = children.indexOf(Main.panel.statusArea[role]?.container);
+        if (i >= 0 && (at < 0 || i < at))
+            at = i;
+    }
+    return at;
+}
+
 export class PubRuntime {
     constructor(extension) {
         this._ext = extension;
         this._indicator = null;
+        this._boxWatch = 0;
+        this._placing = false;
     }
 
     enable() {
         this._indicator = new PubIndicator(this._ext);
-        Main.panel.addToStatusArea(this._ext.uuid, this._indicator, 1, 'right');
+        Main.panel.addToStatusArea(this._ext.uuid, this._indicator, systemStatusIndex(), 'right');
+        this._placeBeforeSystemStatus();
+        this._boxWatch = Main.panel._rightBox.connect('child-added', () => this._placeBeforeSystemStatus());
     }
 
     disable() {
+        if (this._boxWatch) {
+            Main.panel._rightBox.disconnect(this._boxWatch);
+            this._boxWatch = 0;
+        }
         this._indicator?.destroy();
         this._indicator = null;
+    }
+
+    _placeBeforeSystemStatus() {
+        if (this._placing)
+            return;
+        const box = Main.panel._rightBox;
+        const actor = this._indicator?.container;
+        if (!actor || actor.get_parent() !== box)
+            return;
+        const children = box.get_children();
+        const have = children.indexOf(actor);
+        const want = systemStatusIndex();
+        if (have < 0 || want < 0)
+            return;
+        const target = have < want ? want - 1 : want;
+        if (have === target)
+            return;
+        this._placing = true;
+        box.set_child_at_index(actor, target);
+        this._placing = false;
     }
 }

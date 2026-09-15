@@ -130,7 +130,11 @@
 
 .pub-orow-box { spacing: 12px; }
 .pub-orow-mid { spacing: 5px; }
-.pub-orow-right { spacing: 3px; padding-left: 4px; }
+.pub-orow-right {
+  spacing: 3px;
+  padding-left: 4px;
+  min-width: 108px;
+}
 
 .pub-orow-pct {
   font-size: 14px;
