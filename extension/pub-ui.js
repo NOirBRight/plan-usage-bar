@@ -14,7 +14,6 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
-const REFRESH_SECONDS = 300;
 const LOGIN_WAIT_SECONDS = 300;
 const PROVIDER_NAMES = {
     claude: 'Claude',
@@ -63,9 +62,11 @@ const LOGIN = {
         file: '~/.grok/auth.json', hint: 'Grok API key / access token',
     },
     cursor: {
-        kind: 'cookie', page: 'https://cursor.com/dashboard', pageLabel: 'cursor.com',
-        hint: 'WorkosCursorSessionToken（userId::token）',
+        kind: 'cli', cli: 'Cursor Agent', bin: 'cursor-agent', args: ['login'],
+        file: '~/.config/cursor/auth.json',
+        hint: 'WorkosCursorSessionToken 或 Cursor JWT',
         extra: { key: 'userId', hint: 'Cursor user ID（token 已含时留空）', required: false },
+        page: 'https://cursor.com/dashboard', pageLabel: 'cursor.com',
     },
     'ollama-cloud': {
         kind: 'key', page: 'https://ollama.com/settings/keys', pageLabel: 'ollama.com',
@@ -153,10 +154,32 @@ function splitUserToken(value) {
     return { userId, token };
 }
 
-function canonicalizeCredential(item) {
+function userIdFromJwt(token) {
+    const parts = String(token).split('.');
+    if (parts.length < 2)
+        return null;
+    try {
+        let b64 = parts[1].replaceAll('-', '+').replaceAll('_', '/');
+        while (b64.length % 4)
+            b64 += '=';
+        const payload = JSON.parse(new TextDecoder().decode(GLib.base64_decode(b64)));
+        const sub = payload?.sub;
+        if (typeof sub !== 'string')
+            return null;
+        const user = sub.includes('|') ? sub.slice(sub.lastIndexOf('|') + 1) : sub;
+        return user.startsWith('user_') ? user : null;
+    } catch (_error) {
+        return null;
+    }
+}
+
+function canonicalizeCredential(item, id) {
     if (!item || typeof item.token !== 'string' || item.token.trim().length === 0)
         return null;
-    const credential = { token: item.token.trim() };
+    let token = item.token.trim();
+    if (id === 'cursor')
+        token = token.replace(/^WorkosCursorSessionToken=/iu, '').trim();
+    const credential = { token };
     if (typeof item.accountId === 'string' && item.accountId.trim().length > 0)
         credential.accountId = item.accountId.trim();
     if (typeof item.userId === 'string' && item.userId.trim().length > 0)
@@ -167,6 +190,11 @@ function canonicalizeCredential(item) {
     if (credential.userId === undefined && split) {
         credential.userId = split.userId;
         credential.token = split.token;
+    }
+    if (credential.userId === undefined && id === 'cursor') {
+        const fromJwt = userIdFromJwt(credential.token);
+        if (fromJwt)
+            credential.userId = fromJwt;
     }
     return credential;
 }
@@ -225,7 +253,6 @@ const PubIndicator = GObject.registerClass({
         this._refreshing = false;
         this._pendingReason = null;
         this._engineProc = null;
-        this._timer = 0;
         this._stripIdle = 0;
         this._stripDirty = false;
         this._menuLater = 0;
@@ -276,9 +303,9 @@ const PubIndicator = GObject.registerClass({
             if (open) {
                 this._context?.close();
                 this._choosePageOnOpen(this._pickStripUnderPointer());
+                this._readSnapshotFile();
                 this._rebuildMenu();
                 this._syncChipSelection();
-                this.requestSnapshot('popover');
             } else {
                 this._endDrag(false);
                 this._rebuildStripSoon();
@@ -295,6 +322,7 @@ const PubIndicator = GObject.registerClass({
 
         this._loadSettings();
         this._loadCredentials();
+        this._readSnapshotFile();
         this._rebuildStrip();
         this._rebuildMenu();
         this._startProbe();
@@ -1337,10 +1365,10 @@ const PubIndicator = GObject.registerClass({
 
         if (paste) {
             card.add_child(title('粘贴凭据'));
-            if (spec.kind === 'cookie')
-                card.add_child(describe('在浏览器登录 cursor.com 后，从开发者工具的 Cookie 里复制 WorkosCursorSessionToken。'));
-            else if (spec.kind === 'key')
+            if (spec.kind === 'key')
                 card.add_child(describe('在 ollama.com 创建一个 API key，粘贴到下面。'));
+            else if (spec.kind === 'cli' && id === 'cursor')
+                card.add_child(describe('粘贴 WorkosCursorSessionToken，或 cursor-agent 登录后写入的 JWT。带 userId:: 或 JWT 即可，不必再填 user ID。'));
             else
                 card.add_child(describe(`手动方式，一般用不到：${spec.cli} 登录后 PUB 会自动读取。`));
             const token = new St.Entry({ hint_text: spec.hint, can_focus: true, x_expand: true });
@@ -1399,12 +1427,6 @@ const PubIndicator = GObject.registerClass({
                     : `本机没有找到 ${spec.bin} 命令。安装 ${spec.cli} 后可以在浏览器里登录，也可以手动粘贴。`));
                 if (cliPath)
                     row.add_child(this._button('在浏览器中登录 ↗', 'pub-btn-sug', () => this._startCliLogin(id)));
-            } else if (spec.kind === 'cookie') {
-                card.add_child(describe('Cursor 没有公开的授权接口。先在浏览器登录，再复制 Cookie 粘贴过来。'));
-                row.add_child(this._button(`打开 ${spec.pageLabel} ↗`, 'pub-btn-sug', () => {
-                    this._openUri(spec.page, false);
-                    this._beginPaste(id);
-                }));
             } else {
                 card.add_child(describe('Ollama Cloud 用 API key。在网页里创建后粘贴即可。'));
                 row.add_child(this._button(`打开 ${spec.pageLabel} ↗`, 'pub-btn-sug', () => {
@@ -1613,7 +1635,7 @@ const PubIndicator = GObject.registerClass({
         const raw = { token };
         if (spec?.extra && extra.length > 0)
             raw[spec.extra.key] = extra;
-        const credential = canonicalizeCredential(raw);
+        const credential = canonicalizeCredential(raw, id);
         if (!credential) {
             this._paste = { id, message: '先粘贴凭据。' };
             this._rebuildMenu();
@@ -1650,14 +1672,13 @@ const PubIndicator = GObject.registerClass({
         setting.enabled = enabled;
         if (!enabled) {
             setting.pinned = false;
-            this._snapshot.providers = this._snapshot.providers.filter(provider => provider.id !== id);
             if (this._cli?.id === id)
                 this._cancelLogin();
         }
         this._writeSettings();
+        this._readSnapshotFile();
         this._rebuildStripSoon();
         this._rebuildMenuLater();
-        this.requestSnapshot('manual');
     }
 
     _setPinned(id, pinned, immediate) {
@@ -1685,11 +1706,9 @@ const PubIndicator = GObject.registerClass({
         else
             setting.primary = windowId;
         this._writeSettings();
-        applyPrimary(this._snapshot.providers.find(provider => provider.id === id), windowId);
+        this._readSnapshotFile();
         this._rebuildStripSoon();
         this._rebuildMenu();
-        if (windowId === null)
-            this.requestSnapshot('manual');
     }
 
     _applyProviderOrder() {
@@ -1783,7 +1802,7 @@ const PubIndicator = GObject.registerClass({
             if (!parsed || typeof parsed !== 'object')
                 return;
             for (const [id, item] of Object.entries(parsed)) {
-                const credential = canonicalizeCredential(item);
+                const credential = canonicalizeCredential(item, id);
                 if (credential)
                     this._credentials[id] = credential;
             }
@@ -1873,8 +1892,7 @@ const PubIndicator = GObject.registerClass({
     requestSnapshot(reason) {
         this._readSnapshotFile();
         if (this._refreshing) {
-            if (reason !== 'timer')
-                this._pendingReason = reason;
+            this._pendingReason = reason;
             this._refreshUi();
             return;
         }
@@ -1883,7 +1901,6 @@ const PubIndicator = GObject.registerClass({
             ? '/usr/bin/node'
             : GLib.find_program_in_path('node');
         if (!engine.query_exists(null) || !node) {
-            this._armTimer();
             this._refreshUi();
             return;
         }
@@ -1907,7 +1924,6 @@ const PubIndicator = GObject.registerClass({
                     return;
                 this._readSnapshotFile();
                 this._refreshUi();
-                this._armTimer();
                 if (this._pendingReason) {
                     const next = this._pendingReason;
                     this._pendingReason = null;
@@ -1918,30 +1934,11 @@ const PubIndicator = GObject.registerClass({
             this._refreshing = false;
             this._engineProc = null;
             console.error('PUB: could not spawn engine', error);
-            this._armTimer();
         }
         this._refreshUi();
     }
 
-    _armTimer() {
-        if (!this._alive)
-            return;
-        if (this._timer) {
-            GLib.Source.remove(this._timer);
-            this._timer = 0;
-        }
-        this._timer = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, REFRESH_SECONDS, () => {
-            this._timer = 0;
-            this.requestSnapshot('timer');
-            return GLib.SOURCE_REMOVE;
-        });
-    }
-
     _killEngine() {
-        if (this._timer) {
-            GLib.Source.remove(this._timer);
-            this._timer = 0;
-        }
         if (this._engineProc) {
             try {
                 this._engineProc.force_exit();
@@ -2192,7 +2189,6 @@ export class PubRuntime {
     enable() {
         this._indicator = new PubIndicator(this._ext);
         Main.panel.addToStatusArea(this._ext.uuid, this._indicator, 1, 'right');
-        this._indicator.requestSnapshot('manual');
     }
 
     disable() {
