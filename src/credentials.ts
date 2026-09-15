@@ -64,7 +64,8 @@ export function parsePubCredentials(value: unknown): Record<string, PubCredentia
   const parsed: Record<string, PubCredential> = {}
   for (const [id, item] of Object.entries(value)) {
     if (!isRecord(item)) continue
-    const token = typeof item['token'] === 'string' ? item['token'].trim() : ''
+    const raw = typeof item['token'] === 'string' ? item['token'].trim() : ''
+    const token = id === 'cursor' ? raw.replace(/^WorkosCursorSessionToken=/iu, '').trim() : raw
     if (token.length === 0) continue
     const credential: PubCredential = { token }
     const accountId = item['accountId']
@@ -81,6 +82,11 @@ export function parsePubCredentials(value: unknown): Record<string, PubCredentia
       credential.userId = split.userId
       credential.token = split.token
     }
+    if (credential.userId === undefined && id === 'cursor') {
+      const fromJwt = userIdFromJwt(credential.token)
+      if (fromJwt !== undefined)
+        credential.userId = fromJwt
+    }
     parsed[id] = credential
   }
   return parsed
@@ -95,12 +101,33 @@ export function splitUserToken(value: string): { userId: string, token: string }
   return { userId, token }
 }
 
+function userIdFromJwt(token: string): string | undefined {
+  const parts = token.split('.')
+  if (parts.length < 2) return undefined
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1]!, 'base64url').toString('utf8')) as unknown
+    if (!isRecord(payload) || typeof payload['sub'] !== 'string') return undefined
+    const sub = payload['sub']
+    const user = sub.includes('|') ? sub.slice(sub.lastIndexOf('|') + 1) : sub
+    return user.startsWith('user_') ? user : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export async function loadPubCredentials(
   store: CredentialStore,
   configDir: string,
 ): Promise<Record<string, PubCredential>> {
   const value = await readJsonFile(store, join(configDir, 'credentials.json'))
   return parsePubCredentials(value)
+}
+
+function cursorAuthPath(store: CredentialStore): string {
+  const xdg = store.env['XDG_CONFIG_HOME']
+  if (typeof xdg === 'string' && xdg.length > 0)
+    return join(xdg, 'cursor', 'auth.json')
+  return join(store.home, '.config', 'cursor', 'auth.json')
 }
 
 function claudeCredentialsPath(store: CredentialStore): string {
@@ -136,6 +163,16 @@ async function codexFromCli(store: CredentialStore): Promise<ProviderAccess | un
   if (typeof token !== 'string' || token.length === 0) return undefined
   if (typeof accountId !== 'string' || accountId.length === 0) return undefined
   return { token, accountId, source: 'cli' }
+}
+
+async function cursorFromCli(store: CredentialStore): Promise<ProviderAccess | undefined> {
+  const official = await readJsonFile(store, cursorAuthPath(store))
+  if (!isRecord(official)) return undefined
+  const token = typeof official['accessToken'] === 'string' ? official['accessToken'].trim() : ''
+  if (token.length === 0) return undefined
+  const userId = userIdFromJwt(token)
+  if (userId === undefined) return undefined
+  return { token, userId, source: 'cli' }
 }
 
 async function grokFromCli(store: CredentialStore): Promise<ProviderAccess | undefined> {
@@ -189,7 +226,7 @@ export async function resolveAccess(
   }
   if (id === 'cursor') {
     if (pub !== undefined) return pubCursor(pub)
-    return undefined
+    return await cursorFromCli(store)
   }
   if (id === 'grok') {
     if (pub !== undefined) return pubToken(pub)

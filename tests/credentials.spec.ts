@@ -7,6 +7,12 @@ import {
 } from '../src/credentials.ts'
 import { parseSettings, DEFAULT_SETTINGS } from '../src/snapshot.ts'
 
+function cursorJwt(sub: string): string {
+  const header = Buffer.from(JSON.stringify({ alg: 'none' })).toString('base64url')
+  const payload = Buffer.from(JSON.stringify({ sub })).toString('base64url')
+  return `${header}.${payload}.sig`
+}
+
 function memoryStore(files: Record<string, string>, env: NodeJS.ProcessEnv = {}): CredentialStore {
   return {
     home: '/home/user',
@@ -33,6 +39,15 @@ describe('parsePubCredentials', () => {
     })).toEqual({
       claude: { token: 'claude-token', plan: 'pro' },
       cursor: { token: 'cursor-token', userId: 'user_abc' },
+    })
+  })
+
+  it('takes Cursor userId from a JWT sub', () => {
+    const token = cursorJwt('auth0|user_01ABC')
+    expect(parsePubCredentials({
+      cursor: { token: `WorkosCursorSessionToken=${token}` },
+    })).toEqual({
+      cursor: { token, userId: 'user_01ABC' },
     })
   })
 })
@@ -130,6 +145,38 @@ describe('resolveAccess', () => {
   it('does not resolve Cursor without a userId', async () => {
     const store = memoryStore({})
     await expect(resolveAccess('cursor', store, { token: 'cursor-token' })).resolves.toBeUndefined()
+  })
+
+  it('falls back to cursor-agent auth.json', async () => {
+    const token = cursorJwt('auth0|user_01CLI')
+    const store = memoryStore({
+      '/home/user/.config/cursor/auth.json': JSON.stringify({ accessToken: token, refreshToken: 'refresh' }),
+    })
+    await expect(resolveAccess('cursor', store)).resolves.toEqual({
+      token,
+      userId: 'user_01CLI',
+      source: 'cli',
+    })
+  })
+
+  it('reads Cursor auth.json from XDG_CONFIG_HOME', async () => {
+    const token = cursorJwt('user_01XDG')
+    const store = memoryStore({
+      '/opt/cursor-xdg/cursor/auth.json': JSON.stringify({ accessToken: token }),
+    }, { XDG_CONFIG_HOME: '/opt/cursor-xdg' })
+    await expect(resolveAccess('cursor', store)).resolves.toEqual({
+      token,
+      userId: 'user_01XDG',
+      source: 'cli',
+    })
+  })
+
+  it('does not mix an incomplete PUB Cursor credential with cursor-agent', async () => {
+    const token = cursorJwt('auth0|user_01CLI')
+    const store = memoryStore({
+      '/home/user/.config/cursor/auth.json': JSON.stringify({ accessToken: token }),
+    })
+    await expect(resolveAccess('cursor', store, { token: 'opaque-cookie' })).resolves.toBeUndefined()
   })
 
   it('labels OLLAMA_API_KEY as env', async () => {

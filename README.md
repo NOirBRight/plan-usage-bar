@@ -16,7 +16,7 @@ GNOME 顶栏上的 AI 编程套餐额度条。Claude、Codex、Cursor、Grok、O
 - **概览与详情**：点开看全部 Provider；点某一家看它所有的额度周期（5 小时、每周、每月等）和重置时间。
 - **剩余 / 已用**：全局切换百分比读法。
 - **设置**：拖动排序、固定到顶栏、选择顶栏显示哪个额度周期（Primary Window）。
-- **登录**：Claude、Codex、Grok 调用官方 CLI 在浏览器里授权；Cursor 粘贴 Cookie；Ollama Cloud 粘贴 API key。
+- **登录**：Claude、Codex、Cursor、Grok 调用官方 CLI 在浏览器里授权；Ollama Cloud 粘贴 API key。
 - **跟随系统**：深浅主题和强调色都跟随 GNOME，Ubuntu 的 Yaru 主题也适配。
 - **不注销重载**：改完界面代码，右键「重新加载」立即生效。
 
@@ -26,7 +26,7 @@ GNOME 顶栏上的 AI 编程套餐额度条。Claude、Codex、Cursor、Grok、O
 | --- | --- | --- |
 | Claude | Claude 订阅用量接口 | `claude auth login`，或读取 `~/.claude/.credentials.json` |
 | Codex | ChatGPT Codex 用量接口 | `codex login`，或读取 `~/.codex/auth.json` |
-| Cursor | cursor.com 用量汇总 | 粘贴 `WorkosCursorSessionToken` |
+| Cursor | cursor.com 用量汇总 | `cursor-agent login`，或读取 `~/.config/cursor/auth.json`，或粘贴 Cookie / JWT |
 | Grok | Grok CLI 计费接口 | `grok login --oauth`，或读取 `~/.grok/auth.json` |
 | Ollama Cloud | ollama.com 用量接口 | 粘贴 API key，或环境变量 `OLLAMA_API_KEY` |
 
@@ -66,7 +66,7 @@ bash scripts/install-launcher.sh
 
 - 左键顶栏图标：打开概览。左键某个计量格：直接看这家的详情。
 - 右键顶栏图标：立即刷新、设置、重新加载、退出。
-- 每 5 分钟自动刷新一次，打开面板时也会刷新。
+- 打开面板只读上次快照。要拉新用量，点右键或面板上的「立即刷新」。登录完成、保存或删除凭据时也会拉一次。
 
 ## 隐私与凭据
 
