@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PUB prototype (throwaway)</title>
+  <!--
+    Three variants of the PUB GNOME strip + popover, switchable via ?variant=,
+    answering: can this look as good as the CodexBar macOS screenshot inside a GNOME extension?
+  -->
+  <style>
+    :root { --panel: 36px; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      font-family: Inter, "SF Pro Text", "Ubuntu", system-ui, sans-serif;
+      overflow: hidden;
+      background: #1a1430;
+    }
+    .wallpaper {
+      position: fixed; inset: 0;
+      background:
+        radial-gradient(1200px 700px at 70% 10%, #c9a8ff 0%, transparent 50%),
+        radial-gradient(900px 600px at 10% 80%, #7aa2ff 0%, transparent 45%),
+        linear-gradient(160deg, #5b4b8a 0%, #7d6aa8 40%, #8ec5ff 100%);
+    }
+    .prototype-badge {
+      position: fixed; top: 48px; left: 12px; z-index: 40;
+      font: 11px/1.35 ui-monospace, monospace;
+      color: #fff; background: rgba(0,0,0,.62);
+      border: 1px solid rgba(255,255,255,.14);
+      border-radius: 8px; padding: 8px 10px; max-width: 340px;
+      white-space: pre-wrap;
+      pointer-events: none;
+    }
+    .ctx-menu {
+      position: fixed; z-index: 30; min-width: 188px;
+      background: rgba(28,28,30,.92); color: #f2f2f7;
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 10px; padding: 6px 0;
+      box-shadow: 0 18px 50px rgba(0,0,0,.35);
+      backdrop-filter: blur(20px);
+      display: none;
+    }
+    .ctx-menu.open { display: block; }
+    .ctx-menu button {
+      display: block; width: 100%; text-align: left;
+      background: none; border: 0; color: inherit;
+      font: 13px/32px Inter, sans-serif; padding: 0 14px; cursor: pointer;
+    }
+    .ctx-menu button:hover { background: rgba(255,255,255,.08); }
+    .ctx-menu .sep { height: 1px; background: rgba(255,255,255,.12); margin: 5px 0; }
+
+    /* ===== switcher (not part of the design) ===== */
+    .switcher {
+      position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+      z-index: 50; display: flex; align-items: center; gap: 10px;
+      background: #111; color: #fff; border: 2px solid #fff;
+      border-radius: 999px; padding: 8px 12px;
+      box-shadow: 0 8px 30px rgba(0,0,0,.45);
+      font: 13px/1 Inter, sans-serif; user-select: none;
+    }
+    .switcher button {
+      width: 28px; height: 28px; border-radius: 50%;
+      border: 1px solid #fff; background: #000; color: #fff; cursor: pointer;
+    }
+    .switcher .label { min-width: 280px; text-align: center; }
+
+    /* shared tiny bits */
+    .bar-track { height: 6px; border-radius: 99px; background: rgba(120,120,140,.22); overflow: hidden; }
+    .bar-fill { height: 100%; border-radius: 99px; display: block; }
+    .warn { color: #c2410c; }
+    .crit { color: #b91c1c; }
+    .ok { color: #16a34a; }
+
+    /* Variant A — frosted instrument strip + icon-rail popover */
+    .a-strip {
+      display: flex; align-items: stretch; gap: 0; height: 28px; padding: 2px;
+      margin-right: 12px; border-radius: 9px;
+      background: rgba(255,255,255,.08);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 0 0 1px rgba(255,255,255,.1);
+    }
+    .a-ctrl {
+      width: 24px; border: 0; border-radius: 7px; cursor: pointer;
+      color: rgba(255,255,255,.92); display: grid; place-items: center; background: transparent;
+    }
+    .a-ctrl:hover { background: rgba(255,255,255,.1); }
+    .a-ctrl.on { background: rgba(255,255,255,.2); }
+    .a-split { width: 1px; margin: 5px 3px; background: rgba(255,255,255,.18); flex: none; }
+    .a-chip {
+      display: grid; grid-template-rows: 14px 2px; align-items: center; justify-items: stretch;
+      gap: 3px; min-width: 0; padding: 3px 7px 4px; border: 0; cursor: pointer;
+      border-radius: 7px; color: #fff; background: transparent;
+    }
+    .a-chip:hover { background: rgba(255,255,255,.1); }
+    .a-chip.on { background: rgba(255,255,255,.2); }
+    .a-chip-row { display: flex; align-items: center; gap: 4px; justify-content: center; height: 14px; }
+    .a-chip-row svg { width: 12px; height: 12px; display: block; flex: none; }
+    .a-chip .pct {
+      font: 600 10px/1 "SF Pro Text", Inter, sans-serif;
+      font-variant-numeric: tabular-nums; letter-spacing: .04em; opacity: .95;
+    }
+    .a-chip .mini { display: block; height: 2px; border-radius: 99px; background: rgba(255,255,255,.22); overflow: hidden; }
+    .a-pop {
+      position: absolute; top: 8px; right: 72px; width: 420px;
+      display: grid; grid-template-columns: 64px 1fr; align-items: stretch;
+      background: linear-gradient(180deg, rgba(252,252,255,.84), rgba(236,236,248,.76));
+      border: 1px solid rgba(255,255,255,.72); border-radius: 18px;
+      box-shadow: 0 24px 64px rgba(40,20,80,.28), 0 1px 0 rgba(255,255,255,.55) inset;
+      backdrop-filter: blur(36px) saturate(1.45); overflow: hidden;
+    }
+    .a-tabs {
+      display: flex; flex-direction: column; gap: 2px; padding: 8px 6px 10px;
+      background: rgba(255,255,255,.28);
+      border-right: 1px solid rgba(60,60,80,.08);
+    }
+    .a-tab {
+      display: grid; grid-template-rows: 20px 3px 11px; justify-items: center; align-items: center;
+      width: 100%; box-sizing: border-box; border: 0; background: transparent; cursor: pointer;
+      padding: 7px 4px 6px; gap: 4px; border-radius: 12px; color: #3a3a48;
+    }
+    .a-tab:hover { background: rgba(40,40,55,.10); }
+    .a-tab.on, .a-tab.on:hover { background: #3b6cff; color: #fff; box-shadow: 0 6px 14px rgba(59,108,255,.26); }
+    .a-tab.on:hover { background: #2f5ef0; }
+    .a-tab .ico { width: 20px; height: 20px; display: grid; place-items: center; }
+    .a-tab .ico svg { width: 18px; height: 18px; display: block; }
+    .a-tab .mini {
+      display: block; width: 22px; height: 3px;
+      border-radius: 99px; overflow: hidden; background: rgba(40,40,55,.2);
+    }
+    .a-tab.on .mini { background: rgba(255,255,255,.35); }
+    .a-tab .pct {
+      display: block; width: auto; text-align: center;
+      font: 650 10px/1 "SF Pro Text", Inter, sans-serif;
+      font-variant-numeric: tabular-nums; letter-spacing: .02em; opacity: .72;
+    }
+    .a-tab.on .pct { opacity: .95; }
+    .a-detail { padding: 16px 20px 8px; overflow: visible; }
+    .a-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 18px; }
+    .a-head h2 { margin: 0; font: 650 22px/1.1 "SF Pro Display", Inter, sans-serif; color: #1a1a24; letter-spacing: -.02em; }
+    .a-head .sub { margin-top: 4px; font: 12.5px/1.3 Inter, sans-serif; color: #7a7a8c; }
+    .a-head .plan { font: 13px Inter, sans-serif; color: #8a8a9a; padding-top: 4px; }
+    .a-win { margin: 0 0 14px; }
+    .a-win h4 { margin: 0; font: 650 13.5px/1.2 "SF Pro Text", Inter, sans-serif; color: #1c1c28; }
+    .a-win .bar { height: 5px; margin: 7px 0 5px; border-radius: 99px; background: rgba(120,120,140,.16); overflow: hidden; }
+    .a-win .meta { display: flex; justify-content: space-between; gap: 8px; font: 12px/1.3 Inter, sans-serif; color: #6e6e80; }
+    .a-win .pace { margin-top: 3px; font: 11.5px Inter, sans-serif; color: #8a8a9c; }
+    .a-block { margin: 4px 0 12px; }
+    .a-block h4 { margin: 0 0 6px; font: 650 13.5px Inter, sans-serif; color: #1c1c28; }
+    .a-block .row { display: flex; justify-content: space-between; gap: 8px; font: 12.5px Inter, sans-serif; color: #5c5c70; }
+    .a-cost { display: flex; align-items: center; justify-content: space-between; margin: 2px 0 4px; }
+    .a-cost h4 { margin: 0; }
+    .a-cost .chev { opacity: .35; font-size: 16px; line-height: 1; }
+    .a-lines { margin: 0; padding: 0; list-style: none; font: 12.5px/1.55 Inter, sans-serif; color: #5c5c70; }
+    .a-foot { margin: 8px -20px 0; padding: 8px 20px 12px; border-top: 1px solid rgba(60,60,80,.1); }
+    .a-link {
+      display: flex; align-items: center; gap: 9px; width: 100%;
+      padding: 6px 0; border: 0; background: none; cursor: pointer; text-align: left;
+      font: 13.5px Inter, sans-serif; color: #2a2a38; text-decoration: none;
+    }
+    a.a-link { color: #2a2a38; }
+    .a-link:hover { color: #111; }
+    .a-link svg { width: 15px; height: 15px; opacity: .7; flex: none; }
+    .a-link .go { margin-left: auto; opacity: .35; font-size: 13px; }
+    .a-foot-note { margin: 8px 0 0; font: 11.5px/1.4 Inter, sans-serif; color: #8a8a9c; }
+    .a-quiet { margin: 6px 0 0; padding-top: 6px; border-top: 1px solid rgba(60,60,80,.08); }
+  </style>
+</head>
+<body>
+  <div class="wallpaper"></div>
+  <div id="app"></div>
+  <pre class="prototype-badge" id="stateDump"></pre>
+  <div class="ctx-menu" id="ctxMenu">
+    <button data-act="settings">设置…</button>
+    <button data-act="autostart">开机自启  ✓</button>
+    <div class="sep"></div>
+    <button data-act="exit">退出</button>
+  </div>
+  <div class="switcher" id="switcher">
+    <button id="prev" aria-label="previous">←</button>
+    <div class="label" id="switchLabel"></div>
+    <button id="next" aria-label="next">→</button>
+  </div>
+  <script>
+    /* throwaway prototype — not production PUB */
+    const VARIANTS = {
+      A: { name: "Hang · 截图同构" },
+      B: { name: "Rings · 栏上圆环" },
+      C: { name: "Adwaita · GNOME 老实版" },
+    };
+    /* Live snapshot 2026-09-14 08:10 +08 from this machine's logins. Windows = whatever each API returned. */
+    const PROVIDERS = [
+      { id: "claude", name: "Claude", plan: "Pro", pinned: true, remaining: 0.98, accent: "#C96442",
+        fetched: "Fetched 08:10",
+        usageUrl: "https://claude.ai/settings/usage", statusUrl: "https://status.anthropic.com",
+        windows: [
+        { label: "Session", remaining: 1, reset: "" },
+        { label: "Weekly", remaining: 0.98, reset: "Resets in 3d 20h", primary: true },
+      ]},
+      { id: "codex", name: "Codex", plan: "Pro", pinned: true, remaining: 0.64, accent: "#10a37f",
+        fetched: "Fetched 08:10",
+        usageUrl: "https://chatgpt.com/#settings", statusUrl: "https://status.openai.com",
+        windows: [
+        { label: "Weekly", remaining: 0.64, reset: "Resets in 5d 8h", primary: true },
+        { label: "Spark · 5-hour", remaining: 1, reset: "Resets in 5h" },
+        { label: "Spark · Weekly", remaining: 1, reset: "Resets in 7d" },
+      ]},
+      { id: "cursor", name: "Cursor", plan: "Ultra", pinned: true, remaining: 0.353, accent: "#111111",
+        fetched: "Fetched 08:10",
+        extraNote: "On-demand off",
+        usageUrl: "https://cursor.com/dashboard", statusUrl: "https://status.cursor.com",
+        windows: [
+        { label: "Cursor Models", remaining: 0.411, reset: "Resets in 2d 18h" },
+        { label: "Other Models", remaining: 0, reset: "Resets in 2d 18h" },
+      ]},
+      { id: "grok", name: "Grok", plan: "SuperGrok Heavy", pinned: true, remaining: 0.99, accent: "#111",
+        fetched: "Fetched 08:28",
+        usageUrl: "https://grok.com/?_s=usage", statusUrl: "https://status.x.ai",
+        windows: [
+        { label: "Weekly", remaining: 0.99, reset: "Resets in 6d 16h", primary: true },
+      ]},
+      { id: "ollama-cloud", name: "Ollama Cloud", plan: "Cloud", pinned: false, remaining: 0.999, accent: "#111",
+        fetched: "Fetched 08:10",
+        costMonth: "$0.00 · last 4 weeks",
+        note: "limits 只返回了 Monthly。Free 通常只有 Weekly；Pro/Max 会多出 5-hour Session。有什么画什么。",
+        usageUrl: "https://ollama.com", statusUrl: "https://status.ollama.com",
+        windows: [
+        { label: "Monthly", remaining: 0.999, reset: "", primary: true },
+      ]},
+    ];
+
+    const state = {
+      variant: "A",
+      popover: true,
+      view: "detail",
+      selected: "claude",
+      menu: false,
+      menuX: 0,
+      menuY: 0,
+      remainingMode: true,
+      exited: false,
+      autostart: true,
+    };
+
+    function pctNumber(p) {
+      if (p == null) return null;
+      const v = state.remainingMode ? p : 1 - p;
+      return Math.round(v * 100);
+    }
+    function displayPct(p) {
+      const n = pctNumber(p);
+      return n == null ? "—" : `${n}%`;
+    }
+    function tone(rem) {
+      if (rem == null) return "ok";
+      if (rem <= 0.05) return "crit";
+      if (rem <= 0.20) return "warn";
+      return "ok";
+    }
+    function fillColor(rem) {
+      if (rem == null) return "#cbd5e1";
+      if (rem <= 0.05) return "#ef4444";
+      if (rem <= 0.20) return "#f97316";
+      return "#3b82f6";
+    }
+    /* Brand paths from dsh-llm-providers-ui ProviderMark (cursor/codex/grok/ollama). Claude spark matches the CodexBar screenshot. */
+    function mark(id, size) {
+      const s = size || 16;
+      const inner = {
+        claude: { vb: "0 0 24 24", d: "M12 1.1c.4 0 .72.32.72.72v6.08l4.3-4.3a.72.72 0 1 1 1.02 1.02l-4.3 4.3h6.08a.72.72 0 1 1 0 1.44h-6.08l4.3 4.3a.72.72 0 1 1-1.02 1.02l-4.3-4.3v6.08a.72.72 0 1 1-1.44 0v-6.08l-4.3 4.3a.72.72 0 1 1-1.02-1.02l4.3-4.3H3.6a.72.72 0 1 1 0-1.44h6.08l-4.3-4.3A.72.72 0 1 1 6.4 3.6l4.3 4.3V1.82c0-.4.32-.72.72-.72z" },
+        cursor: { vb: "0.24 -1.44 23.6 26.88", d: "M11.503.131 1.891 5.678a.84.84 0 0 0-.42.726v11.188c0 .3.162.575.42.724l9.609 5.55a1 1 0 0 0 .998 0l9.61-5.55a.84.84 0 0 0 .42-.724V6.404a.84.84 0 0 0-.42-.726L12.497.131a1.01 1.01 0 0 0-.996 0M2.657 6.338h18.55c.263 0 .43.287.297.515L12.23 22.918c-.062.107-.229.064-.229-.06V12.335a.59.59 0 0 0-.295-.51l-9.11-5.257c-.109-.063-.064-.23.061-.23" },
+        codex: { vb: "-1.2 -1.44 26.6 26.88", d: "M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z" },
+        grok: null,
+        "ollama-cloud": { vb: "0 0 24 24", d: "M16.361 10.26a.894.894 0 0 0-.558.47l-.072.148.001.207c0 .193.004.217.059.353.076.193.152.312.291.448.24.238.51.3.872.205a.86.86 0 0 0 .517-.436.752.752 0 0 0 .08-.498c-.064-.453-.33-.782-.724-.897a1.06 1.06 0 0 0-.466 0zm-9.203.005c-.305.096-.533.32-.65.639a1.187 1.187 0 0 0-.06.52c.057.309.31.59.598.667.362.095.632.033.872-.205.14-.136.215-.255.291-.448.055-.136.059-.16.059-.353l.001-.207-.072-.148a.894.894 0 0 0-.565-.472 1.02 1.02 0 0 0-.474.007Zm4.184 2c-.131.071-.223.25-.195.383.031.143.157.288.353.407.105.063.112.072.117.136.004.038-.01.146-.029.243-.02.094-.036.194-.036.222.002.074.07.195.143.253.064.052.076.054.255.059.164.005.198.001.264-.03.169-.082.212-.234.15-.525-.052-.243-.042-.28.087-.355.137-.08.281-.219.324-.314a.365.365 0 0 0-.175-.48.394.394 0 0 0-.181-.033c-.126 0-.207.03-.355.124l-.085.053-.053-.032c-.219-.13-.259-.145-.391-.143a.396.396 0 0 0-.193.032zm.39-2.195c-.373.036-.475.05-.654.086-.291.06-.68.195-.951.328-.94.46-1.589 1.226-1.787 2.114-.04.176-.045.234-.045.53 0 .294.005.357.043.524.264 1.16 1.332 2.017 2.714 2.173.3.033 1.596.033 1.896 0 1.11-.125 2.064-.727 2.493-1.571.114-.226.169-.372.22-.602.039-.167.044-.23.044-.523 0-.297-.005-.355-.045-.531-.288-1.29-1.539-2.304-3.072-2.497a6.873 6.873 0 0 0-.855-.031zm.645.937a3.283 3.283 0 0 1 1.44.514c.223.148.537.458.671.662.166.251.26.508.303.82.02.143.01.251-.043.482-.08.345-.332.705-.672.957a3.115 3.115 0 0 1-.689.348c-.382.122-.632.144-1.525.138-.582-.006-.686-.01-.853-.042-.57-.107-1.022-.334-1.35-.68-.264-.28-.385-.535-.45-.946-.03-.192.025-.509.137-.776.136-.326.488-.73.836-.963.403-.269.934-.46 1.422-.512.187-.02.586-.02.773-.002zm-5.503-11a1.653 1.653 0 0 0-.683.298C5.617.74 5.173 1.666 4.985 2.819c-.07.436-.119 1.04-.119 1.503 0 .544.064 1.24.155 1.721.02.107.031.202.023.208a8.12 8.12 0 0 1-.187.152 5.324 5.324 0 0 0-.949 1.02 5.49 5.49 0 0 0-.94 2.339 6.625 6.625 0 0 0-.023 1.357c.091.78.325 1.438.727 2.04l.13.195-.037.064c-.269.452-.498 1.105-.605 1.732-.084.496-.095.629-.095 1.294 0 .67.009.803.088 1.266.095.555.288 1.143.503 1.534.071.128.243.393.264.407.007.003-.014.067-.046.141a7.405 7.405 0 0 0-.548 1.873c-.062.417-.071.552-.071.991 0 .56.031.832.148 1.279L3.42 24h1.478l-.05-.091c-.297-.552-.325-1.575-.068-2.597.117-.472.25-.819.498-1.296l.148-.29v-.177c0-.165-.003-.184-.057-.293a.915.915 0 0 0-.194-.25 1.74 1.74 0 0 1-.385-.543c-.424-.92-.506-2.286-.208-3.451.124-.486.329-.918.544-1.154a.787.787 0 0 0 .223-.531c0-.195-.07-.355-.224-.522a3.136 3.136 0 0 1-.817-1.729c-.14-.96.114-2.005.69-2.834.563-.814 1.353-1.336 2.237-1.475.199-.033.57-.028.776.01.226.04.367.028.512-.041.179-.085.268-.19.374-.431.093-.215.165-.333.36-.576.234-.29.46-.489.822-.729.413-.27.884-.467 1.352-.561.17-.035.25-.04.569-.04.319 0 .398.005.569.04a4.07 4.07 0 0 1 1.914.997c.117.109.398.457.488.602.034.057.095.177.132.267.105.241.195.346.374.43.14.068.286.082.503.045.343-.058.607-.053.943.016 1.144.23 2.14 1.173 2.581 2.437.385 1.108.276 2.267-.296 3.153-.097.15-.193.27-.333.419-.301.322-.301.722-.001 1.053.493.539.801 1.866.708 3.036-.062.772-.26 1.463-.533 1.854a2.096 2.096 0 0 1-.224.258.916.916 0 0 0-.194.25c-.054.109-.057.128-.057.293v.178l.148.29c.248.476.38.823.498 1.295.253 1.008.231 2.01-.059 2.581a.845.845 0 0 0-.044.098c0 .006.329.009.732.009h.73l.02-.074.036-.134c.019-.076.057-.3.088-.516.029-.217.029-1.016 0-1.258-.11-.875-.295-1.57-.597-2.226-.032-.074-.053-.138-.046-.141.008-.005.057-.074.108-.152.376-.569.607-1.284.724-2.228.031-.26.031-1.378 0-1.628-.083-.645-.182-1.082-.348-1.525a6.083 6.083 0 0 0-.329-.7l-.038-.064.131-.194c.402-.604.636-1.262.727-2.04a6.625 6.625 0 0 0-.024-1.358 5.512 5.512 0 0 0-.939-2.339 5.325 5.325 0 0 0-.95-1.02 8.097 8.12 0 0 1-.186-.152.692.692 0 0 1 .023-.208c.208-1.087.201-2.443-.017-3.503-.19-.924-.535-1.658-.98-2.082-.354-.338-.716-.482-1.15-.455-.996.059-1.8 1.205-2.116 3.01a6.805 6.805 0 0 0-.097.726c0 .036-.007.066-.015.066a.96.96 0 0 1-.149-.078A4.857 4.857 0 0 0 12 3.03c-.832 0-1.687.243-2.456.698a.958.958 0 0 1-.148.078c-.008 0-.015-.03-.015-.066a6.71 6.71 0 0 0-.097-.725C8.997 1.392 8.337.319 7.46.048a2.096 2.096 0 0 0-.585-.041Zm.293 1.402c.248.197.523.759.682 1.388.03.113.06.244.069.292.007.047.026.152.041.233.067.365.098.76.102 1.24l.002.475-.12.175-.118.178h-.278c-.324 0-.646.041-.954.124l-.238.06c-.033.007-.038-.003-.057-.144a8.438 8.438 0 0 1 .016-2.323c.124-.788.413-1.501.696-1.711.067-.05.079-.049.157.013zm9.825-.012c.17.126.358.46.498.888.28.854.36 2.028.212 3.145-.019.14-.024.151-.057.144l-.238-.06a3.693 3.693 0 0 0-.954-.124h-.278l-.119-.178-.119-.175.002-.474c.004-.669.066-1.19.214-1.772.157-.623.434-1.185.68-1.382.078-.062.09-.063.159-.012z" },
+      };
+      if (id === "grok") {
+        return `<svg viewBox="-33.7 -30.4 629.4 604.9" width="${s}" height="${s}" aria-hidden="true"><path fill="currentColor" d="M411 105C376 80 334 66 289 66C173 66 79 160 79 276C79 306 85 329 95 353C117 407 87 451 0 542L178 383C150 355 134 318 134 277C134 192 203 123 289 123C310 123 330 127 348 134Z"/><path fill="currentColor" d="M167 448L230 418C248 426 268 430 289 430C374 430 443 361 443 277C443 256 439 234 431 214C427 206 416 204 407 210L217 349L562 2C480 103 475 144 494 229C518 333 468 422 391 459C319 494 235 498 167 448Z"/></svg>`;
+      }
+      const m = inner[id];
+      if (!m) return "";
+      return `<svg viewBox="${m.vb}" width="${s}" height="${s}" aria-hidden="true"><path fill="currentColor" d="${m.d}"/></svg>`;
+    }
+    function hubMark(size) {
+      const s = size || 14;
+      return `<svg width="${s}" height="${s}" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r="7.25" fill="none" stroke="currentColor" stroke-width="1.7"/>
+        <circle cx="12" cy="12" r="2.15" fill="currentColor"/>
+        <circle cx="12" cy="3.6" r="1.85" fill="currentColor"/>
+        <circle cx="20.4" cy="12" r="1.85" fill="currentColor"/>
+        <circle cx="12" cy="20.4" r="1.85" fill="currentColor"/>
+        <circle cx="3.6" cy="12" r="1.85" fill="currentColor"/>
+      </svg>`;
+    }
+    function barFill(p) {
+      const t = tone(p.remaining);
+      if (t === "crit") return "#ef4444";
+      if (t === "warn") return "#f97316";
+      return p.accent === "#111111" || p.accent === "#111" ? "#93c5fd" : p.accent;
+    }
+    function shownWidth(rem) {
+      if (rem == null) return 0;
+      return (state.remainingMode ? rem : 1 - rem) * 100;
+    }
+    function usedLabel(rem) {
+      if (rem == null) return "No percent in API";
+      const n = pctNumber(rem);
+      return state.remainingMode ? `${n}% left` : `${n}% used`;
+    }
+    function ico(p, size, on) {
+      const color = on ? "currentColor" : p.accent;
+      return `<span class="ico" style="color:${color}">${mark(p.id, size)}</span>`;
+    }
+    function pinned() { return PROVIDERS.filter((p) => p.pinned); }
+    function selected() { return PROVIDERS.find((p) => p.id === state.selected) || PROVIDERS[0]; }
+
+    function gnomeClock() {
+      return `<div style="margin-left:auto;display:flex;align-items:center;gap:10px;padding-right:10px;opacity:.95">
+        <span>00:12</span>
+        <span style="opacity:.7">●</span>
+      </div>`;
+    }
+
+    /* ---------- Variant A: inset chips + CodexBar hang popover ---------- */
+    function variantA() {
+      const sel = selected();
+      const meters = pinned().map((p, i) => {
+        const on = state.popover && state.selected === p.id;
+        return `${i ? `<span class="a-split"></span>` : ""}<button class="a-chip${on ? " on" : ""}" data-open="${p.id}">
+          <span class="a-chip-row">${mark(p.id, 12)}<span class="pct">${displayPct(p.remaining)}</span></span>
+          <span class="mini"><span class="bar-fill" style="width:${shownWidth(p.remaining)}%;background:${barFill(p)}"></span></span>
+        </button>`;
+      }).join("");
+      const tabs = PROVIDERS.map((p) => {
+        const on = state.selected === p.id;
+        return `<button class="a-tab pick${on ? " on" : ""}" data-id="${p.id}">
+          ${ico(p, 18, on)}
+          <span class="mini"><span class="bar-fill" style="width:${shownWidth(p.remaining)}%;background:${on ? "#fff" : barFill(p)}"></span></span>
+          <span class="pct">${displayPct(p.remaining)}</span>
+        </button>`;
+      }).join("");
+      const windows = sel.windows.map((w) => `
+        <div class="a-win">
+          <h4>${w.label}</h4>
+          <div class="bar"><span class="bar-fill" style="width:${shownWidth(w.remaining)}%;background:${fillColor(w.remaining)}"></span></div>
+          <div class="meta"><span>${usedLabel(w.remaining)}</span><span>${w.reset || ""}</span></div>
+          ${w.pace ? `<div class="pace">${w.pace}</div>` : ""}
+        </div>`).join("");
+      const extraBlock = sel.extra != null && sel.extraPct != null ? `
+          <div class="a-block">
+            <h4>Extra usage</h4>
+            <div class="row"><span>This month: ${sel.extra}</span><span>${Math.round(sel.extraPct * 100)}% used</span></div>
+            <div class="a-win"><div class="bar" style="margin-top:7px"><span class="bar-fill" style="width:${Math.round(sel.extraPct * 100)}%;background:${sel.extraPct > 0.8 ? "#ef4444" : "#3b82f6"}"></span></div></div>
+          </div>` : (sel.extraNote ? `
+          <div class="a-block">
+            <h4>Extra usage</h4>
+            <div class="row"><span>${sel.extraNote}</span></div>
+          </div>` : "");
+      const costBlock = (sel.costToday || sel.costMonth) ? `
+          <div class="a-block">
+            <div class="a-cost"><h4>Cost</h4></div>
+            <ul class="a-lines">
+              ${sel.costToday ? `<li>Today: ${sel.costToday}</li>` : ""}
+              ${sel.costMonth ? `<li>${sel.costMonth}</li>` : ""}
+            </ul>
+          </div>` : "";
+      const noteBlock = sel.note ? `<p class="a-foot-note" style="margin:0 0 10px">${sel.note}</p>` : "";
+      const detail = `
+        <section class="a-detail">
+          <div class="a-head">
+            <div>
+              <h2>${sel.name}</h2>
+              <div class="sub">${sel.fetched || "Updated just now"}</div>
+            </div>
+            <div class="plan">${sel.plan}</div>
+          </div>
+          ${windows}
+          ${noteBlock}
+          ${extraBlock}
+          ${costBlock}
+          <div class="a-foot">
+            <a class="a-link" href="${sel.usageUrl}" target="_blank" rel="noopener">
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 18V8h2.5v10zm6.75 0V4h2.5v14zm6.75 0v-7H20v7z"/></svg>
+              打开 ${sel.name} 用量页
+              <span class="go">↗</span>
+            </a>
+            <a class="a-link" href="${sel.statusUrl}" target="_blank" rel="noopener">
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20zm1 5h-2v6h6v-2h-4z"/></svg>
+              打开状态页
+              <span class="go">↗</span>
+            </a>
+            <p class="a-foot-note">外链进该 Provider 官网。账号只读本机已有登录，v1 不在这里添加。</p>
+            <div class="a-quiet">
+              <button class="a-link" type="button" data-settings="1">设置…</button>
+            </div>
+          </div>
+        </section>`;
+      const body = `<aside class="a-tabs">${tabs}</aside>${state.view === "settings" ? settingsBody("A") : detail}`;
+
+      return `
+        <div style="height:100%;display:flex;flex-direction:column">
+          <div class="a-panel" style="height:var(--panel);display:flex;align-items:center;padding:0 8px 0 12px;
+            background:rgba(20,18,28,.78);color:#fff;backdrop-filter:blur(20px);border-bottom:1px solid rgba(255,255,255,.08)">
+            <span style="font:600 13px Inter,sans-serif;opacity:.85">Activities</span>
+            <div style="flex:1"></div>
+            ${state.exited ? "" : `
+            <div class="a-strip">
+              <button class="a-ctrl${state.popover ? " on" : ""}" data-ctrl="1" title="PUB">
+                ${hubMark(14)}
+              </button>
+              <span class="a-split"></span>
+              ${meters}
+            </div>`}
+            ${gnomeClock()}
+          </div>
+          <div style="flex:1;position:relative">
+            ${state.popover && !state.exited ? `<div class="a-pop">${body}</div>` : `<div style="padding:80px 40px;color:#fff;font:18px Inter,sans-serif;opacity:.85">
+              ${state.exited ? "已退出。用底部切换器或刷新重新打开原型。" : "点 Strip 打开 Popover。右键总标打开菜单。"}
+            </div>`}
+          </div>
+        </div>`;
+    }
+
+    /* ---------- Variant B: circular meters in the bar, icon rail ---------- */
+    function ring(p, size) {
+      const r = 9, c = 2 * Math.PI * r;
+      const dash = c * (p.remaining == null ? 0 : p.remaining);
+      return `<svg width="${size}" height="${size}" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="${r}" fill="none" stroke="rgba(255,255,255,.2)" stroke-width="3"/>
+        <circle cx="12" cy="12" r="${r}" fill="none" stroke="${fillColor(p.remaining)}" stroke-width="3"
+          stroke-linecap="round" stroke-dasharray="${dash} ${c}" transform="rotate(-90 12 12)"/>
+      </svg>`;
+    }
+    function variantB() {
+      const sel = selected();
+      const meters = pinned().map((p) => `
+        <button data-open="${p.id}" title="${p.name}" style="
+          width:30px;height:30px;border:0;background:transparent;cursor:pointer;padding:0;color:#fff;
+          display:grid;place-items:center;opacity:${state.selected===p.id && state.popover?1:.82}">
+          ${ring(p, 26)}
+        </button>`).join("");
+      const rail = PROVIDERS.map((p) => `
+        <button class="pick" data-id="${p.id}" style="
+          width:64px;border:0;background:${state.selected===p.id?"#1c1c1e":"transparent"};color:#eee;
+          padding:10px 0 8px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:5px">
+          <span style="width:28px;height:28px;display:grid;place-items:center;color:${state.selected===p.id?"#fff":p.accent === "#111111" || p.accent === "#111" ? "#eee" : p.accent}">${mark(p.id, 18)}</span>
+          <span style="width:28px;height:3px;border-radius:99px;background:#2a2a2e;overflow:hidden"><span class="bar-fill" style="width:${shownWidth(p.remaining)}%;background:${fillColor(p.remaining)}"></span></span>
+          <span style="font:700 10px ui-monospace,monospace;opacity:.85">${displayPct(p.remaining)}</span>
+        </button>`).join("");
+      const windows = sel.windows.map((w) => `
+        <div style="display:grid;grid-template-columns:92px 1fr 120px;gap:12px;align-items:center;padding:12px 0;border-bottom:1px solid #2a2a2e">
+          <div style="font:600 13px Inter,sans-serif">${w.label}</div>
+          <div class="bar-track" style="background:#2a2a2e;height:10px"><span class="bar-fill" style="width:${shownWidth(w.remaining)}%;background:${fillColor(w.remaining)}"></span></div>
+          <div style="text-align:right;font:12px Inter,sans-serif;color:#9a9aaa">${displayPct(w.remaining)} · ${(w.reset || "").replace("Resets in ","")}</div>
+        </div>`).join("");
+      const body = state.view === "settings" ? settingsBody("B") : `
+        <div style="display:grid;grid-template-columns:64px 1fr;min-height:400px;background:#111114;color:#f5f5f7">
+          <aside style="background:#0b0b0d;display:flex;flex-direction:column;padding-top:8px">${rail}</aside>
+          <section style="padding:20px 24px">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div style="font:700 20px Inter,sans-serif">${sel.name}</div>
+              <div style="font:12px Inter,sans-serif;color:#888">${sel.plan}</div>
+            </div>
+            <div style="margin-top:18px">${windows}</div>
+          </section>
+        </div>`;
+      return `
+        <div style="height:100%;display:flex;flex-direction:column">
+          <div style="height:var(--panel);display:flex;align-items:center;background:#000;color:#fff;padding:0 8px 0 12px">
+            <span style="font:600 12px Ubuntu,sans-serif">Activities</span>
+            <div style="flex:1"></div>
+            ${state.exited ? "" : `
+            <div style="display:flex;align-items:center;gap:4px;margin-right:8px;background:#1a1a1a;border-radius:16px;padding:2px 6px 2px 4px">
+              <button data-ctrl="1" style="width:26px;height:26px;border:0;border-radius:50%;background:#2a2a2a;color:#fff;cursor:pointer">P</button>
+              ${meters}
+            </div>`}
+            ${gnomeClock()}
+          </div>
+          <div style="flex:1;position:relative">
+            ${state.popover && !state.exited ? `
+            <div style="position:absolute;top:0;right:72px;width:520px;overflow:hidden;
+              border-radius:0 0 16px 16px;box-shadow:0 24px 70px rgba(0,0,0,.5)">${body}</div>` : ""}
+          </div>
+        </div>`;
+    }
+
+    /* ---------- Variant C: honest Adwaita / St.Widget ceiling ---------- */
+    function variantC() {
+      const sel = selected();
+      const meters = pinned().map((p) => `
+        <button data-open="${p.id}" style="
+          display:flex;align-items:center;gap:5px;height:28px;padding:0 7px;border:0;cursor:pointer;
+          background:${state.selected===p.id && state.popover ? "rgba(255,255,255,.12)" : "transparent"};color:#eee;
+          font:13px Ubuntu,sans-serif">
+          ${mark(p.id)}<span>${displayPct(p.remaining)}</span>
+        </button>`).join("");
+      const overview = PROVIDERS.map((p) => `
+        <button class="pick" data-id="${p.id}" style="
+          display:flex;align-items:center;gap:8px;width:100%;border:0;cursor:pointer;
+          padding:8px 10px;background:${state.selected===p.id?"#3584e4":"transparent"};
+          color:${state.selected===p.id?"#fff":"#2e3436"};font:13px Ubuntu,sans-serif;text-align:left">
+          ${mark(p.id)}
+          <span style="flex:1">${p.name}</span>
+          <span>${displayPct(p.remaining)}</span>
+        </button>`).join("");
+      const windows = sel.windows.map((w) => `
+        <div style="padding:10px 0;border-bottom:1px solid #d8d8d8">
+          <div style="display:flex;justify-content:space-between;font:600 13px Ubuntu,sans-serif">
+            <span>${w.label}${w.primary?"  (Primary)":""}</span>
+            <span>${displayPct(w.remaining)}</span>
+          </div>
+          <div class="bar-track" style="margin-top:8px;background:#e6e6e6;height:8px;border-radius:2px">
+            <span class="bar-fill" style="width:${shownWidth(w.remaining)}%;background:#3584e4;border-radius:2px"></span>
+          </div>
+          <div style="margin-top:4px;font:12px Ubuntu,sans-serif;color:#777">${w.reset}</div>
+        </div>`).join("");
+      const body = state.view === "settings" ? settingsBody("C") : `
+        <div style="display:grid;grid-template-columns:200px 1fr;min-height:380px;background:#fafafa;color:#2e3436">
+          <aside style="background:#f0f0f0;border-right:1px solid #dcdcdc;padding:6px 0">${overview}</aside>
+          <section style="padding:16px 18px">
+            <div style="font:700 16px Ubuntu,sans-serif">${sel.name} <span style="font-weight:500;color:#777;font-size:13px">${sel.plan}</span></div>
+            <div style="margin-top:12px">${windows}</div>
+          </section>
+        </div>`;
+      return `
+        <div style="height:100%;display:flex;flex-direction:column;font-family:Ubuntu,Cantarell,sans-serif">
+          <div style="height:var(--panel);display:flex;align-items:center;background:#1e1e1e;color:#eee;padding:0 8px 0 10px">
+            <span style="font:15px Ubuntu,sans-serif">Activities</span>
+            <div style="flex:1"></div>
+            ${state.exited ? "" : `
+            <div style="display:flex;align-items:center;margin-right:6px">
+              <button data-ctrl="1" style="height:28px;padding:0 8px;border:0;background:${state.popover?"#2b2b2b":"transparent"};color:#eee;cursor:pointer;font:13px Ubuntu,sans-serif">PUB</button>
+              ${meters}
+            </div>`}
+            ${gnomeClock()}
+          </div>
+          <div style="flex:1;position:relative">
+            ${state.popover && !state.exited ? `
+            <div style="position:absolute;top:6px;right:70px;width:480px;border-radius:12px;overflow:hidden;
+              border:1px solid #c0c0c0;box-shadow:0 8px 24px rgba(0,0,0,.25);background:#fafafa">
+              <div style="height:10px"></div>
+              ${body}
+            </div>` : `<div style="padding:72px 36px;color:#fff;font:16px Ubuntu,sans-serif">
+              C 是 GNOME 扩展最容易做到的密度：无毛玻璃、12px 圆角、Ubuntu 字体、Adwaita 蓝条。A 的模糊和 22px 大圆角在 St.Widget 里做不到 1:1。
+            </div>`}
+          </div>
+        </div>`;
+    }
+
+    function settingsBody(v) {
+      const dark = v === "B";
+      const fg = dark ? "#f5f5f7" : "#222";
+      const bg = dark ? "#111114" : (v === "C" ? "#fafafa" : "transparent");
+      const rows = PROVIDERS.map((p) => `
+        <label style="display:flex;align-items:center;gap:10px;padding:8px 0;font:13px Inter,Ubuntu,sans-serif;color:${fg}">
+          <input type="checkbox" data-en="${p.id}" checked />
+          Enabled ${p.name}
+          <span style="flex:1"></span>
+          <input type="checkbox" data-pin="${p.id}" ${p.pinned ? "checked" : ""} />
+          Pinned
+        </label>`).join("");
+      return `<div style="padding:18px 18px 16px;min-height:380px;background:${bg};color:${fg}">
+        <div style="font:700 18px Inter,sans-serif;margin-bottom:12px">设置</div>
+        <label style="display:flex;gap:8px;align-items:center;margin:10px 0;font:13px Inter,sans-serif">
+          <input type="checkbox" id="modeRem" ${state.remainingMode ? "checked" : ""} />
+          显示 Remaining（关掉则显示 used）
+        </label>
+        <div style="margin-top:16px">${rows}</div>
+        <div style="margin-top:18px;font:12px Inter,sans-serif;opacity:.65">Primary Window 默认 Weekly / Monthly。v1 每 Provider 一块 Meter。</div>
+      </div>`;
+    }
+
+    function honesty() {
+      return {
+        A: "Aspirational: 顶栏 frosted chip（图标+百分比+细条），Popover 64px 图标轨 + ~356px 详情。毛玻璃/圆角在 St.Widget 做不到 1:1。",
+        B: "结构不同: 栏上圆环 Meter，Popover 是图标轨。圆环可用 Cairo/CSS 画，比 A 更「面板原生」。",
+        C: "诚实天花板: Adwaita 密度。扩展默认就是这种控件语言。若 C 你能接受，GNOME 扩展稳；若必须 A，要自绘 CSS，且模糊会打折。",
+      }[state.variant];
+    }
+
+    function render() {
+      const root = document.getElementById("app");
+      root.innerHTML = state.variant === "A" ? variantA() : state.variant === "B" ? variantB() : variantC();
+      document.getElementById("switchLabel").textContent = `${state.variant} (${VARIANTS[state.variant].name})`;
+      document.getElementById("stateDump").textContent =
+        "PROTOTYPE · throwaway\n" + honesty() + "\n\n" + JSON.stringify({
+          variant: state.variant, popover: state.popover, view: state.view,
+          selected: state.selected, remainingMode: state.remainingMode,
+          pinned: pinned().map((p) => p.id), exited: state.exited,
+        }, null, 2);
+      const menu = document.getElementById("ctxMenu");
+      menu.classList.toggle("open", state.menu);
+      menu.style.left = state.menuX + "px";
+      menu.style.top = state.menuY + "px";
+    }
+
+    function setVariant(v) {
+      state.variant = v;
+      state.menu = false;
+      const url = new URL(location.href);
+      url.searchParams.set("variant", v);
+      history.replaceState(null, "", url);
+      render();
+    }
+    function cycle(dir) {
+      const keys = Object.keys(VARIANTS);
+      const i = keys.indexOf(state.variant);
+      setVariant(keys[(i + dir + keys.length) % keys.length]);
+    }
+
+    document.getElementById("prev").onclick = () => cycle(-1);
+    document.getElementById("next").onclick = () => cycle(1);
+    document.addEventListener("keydown", (e) => {
+      const t = e.target;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      if (e.key === "ArrowLeft") cycle(-1);
+      if (e.key === "ArrowRight") cycle(1);
+    });
+
+    document.getElementById("app").addEventListener("click", (e) => {
+      const ctrl = e.target.closest("[data-ctrl]");
+      const open = e.target.closest("[data-open]");
+      const pick = e.target.closest(".pick");
+      const settings = e.target.closest("[data-settings]");
+      if (ctrl) {
+        state.popover = !state.popover;
+        state.view = "detail";
+        state.menu = false;
+        render();
+        return;
+      }
+      if (settings) {
+        state.view = "settings";
+        state.popover = true;
+        state.menu = false;
+        render();
+        return;
+      }
+      if (open) {
+        state.selected = open.getAttribute("data-open");
+        state.popover = true;
+        state.view = "detail";
+        state.menu = false;
+        render();
+        return;
+      }
+      if (pick) {
+        state.selected = pick.getAttribute("data-id");
+        state.view = "detail";
+        render();
+      }
+    });
+    document.getElementById("app").addEventListener("contextmenu", (e) => {
+      const ctrl = e.target.closest("[data-ctrl]");
+      if (!ctrl) return;
+      e.preventDefault();
+      state.menu = true;
+      state.menuX = e.clientX;
+      state.menuY = e.clientY;
+      render();
+    });
+    document.getElementById("ctxMenu").addEventListener("click", (e) => {
+      const act = e.target.getAttribute("data-act");
+      if (act === "settings") { state.view = "settings"; state.popover = true; state.menu = false; }
+      if (act === "exit") { state.exited = true; state.popover = false; state.menu = false; }
+      if (act === "autostart") { state.autostart = !state.autostart; state.menu = false; }
+      render();
+    });
+    document.addEventListener("change", (e) => {
+      if (e.target.id === "modeRem") {
+        state.remainingMode = e.target.checked;
+        render();
+      }
+      const pin = e.target.getAttribute("data-pin");
+      if (pin) {
+        const p = PROVIDERS.find((x) => x.id === pin);
+        p.pinned = e.target.checked;
+        render();
+      }
+    });
+    document.addEventListener("click", (e) => {
+      if (!e.target.closest(".ctx-menu") && !e.target.closest("[data-ctrl]")) {
+        if (state.menu) { state.menu = false; render(); }
+      }
+    });
+
+    const q = new URLSearchParams(location.search).get("variant");
+    state.variant = VARIANTS[q] ? q : "A";
+    render();
+  </script>
+</body>
+</html>

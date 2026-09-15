@@ -1,0 +1,854 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PUB redesign prototype (throwaway)</title>
+  <!--
+    Three GNOME-native redesigns of the PUB Strip + Popover, switchable via ?variant=A|B|C.
+    Question: which information architecture reads best inside GNOME Shell, and where do Settings live?
+      A  List  · Strip 单行数字；Popover 是列表 Overview，点行推入 Detail；Enabled/Pinned 留在 Popover，登录去 prefs 窗口
+      B  Board · Strip 只有图标+细条；Popover 一屏铺开全部 Provider 与全部 Window，无导航；Settings 全部去 prefs 窗口
+      C  Ring  · Strip 圆环+数字；Popover 是 2 列仪表网格，点 tile 就地展开；Pinned/顺序在 Popover 的编辑模式里改
+    All colours follow a fake "Shell theme" (dark/light toggle in the badge) instead of hard-coded light values.
+    Data = ~/.cache/pub/snapshot.json from 2026-09-14 (Claude really was HTTP 429 at the time).
+  -->
+  <style>
+    :root {
+      --panel: 32px;
+      --ok: #26a269; --warn: #e5a50a; --crit: #c01c28; --accent: #3584e4;
+      --font: "Cantarell", "Adwaita Sans", "Inter", "Ubuntu", system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body { font-family: var(--font); overflow: hidden; background: #1b1f2a; }
+    .wallpaper {
+      position: fixed; inset: 0;
+      background:
+        radial-gradient(900px 600px at 80% 15%, #3b6ea5 0%, transparent 55%),
+        radial-gradient(800px 500px at 15% 85%, #7b5ea7 0%, transparent 50%),
+        linear-gradient(160deg, #1e2a3a 0%, #2e4a6a 50%, #6a8fb5 100%);
+    }
+    button { font-family: inherit; }
+    button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+    /* ===== fake GNOME top bar ===== */
+    .panel {
+      position: relative; z-index: 5;
+      height: var(--panel); display: flex; align-items: center;
+      background: #000; color: #fff; padding: 0 6px 0 10px;
+      font: 600 13px/1 var(--font);
+    }
+    .panel .activities { padding: 0 6px; }
+    .panel .clock { margin-left: auto; margin-right: auto; font-weight: 700; }
+    .panel .sys { display: flex; gap: 10px; padding: 0 10px; opacity: .95; }
+    .panel-btn {
+      height: 26px; border: 0; border-radius: 13px; background: transparent; color: #fff; cursor: pointer;
+      display: flex; align-items: center; gap: 5px; padding: 0 7px;
+    }
+    .panel-btn:hover { background: rgba(255,255,255,.12); }
+    .panel-btn.on { background: rgba(255,255,255,.2); }
+    .panel-btn svg { display: block; }
+    .num { font-variant-numeric: tabular-nums; letter-spacing: .01em; }
+    .t-warn { color: var(--warn); } .t-crit { color: var(--crit); } .t-dim { opacity: .5; }
+
+    /* ===== fake Shell popover, theme follows .dark / .light on body ===== */
+    body.dark {
+      --pop-bg: #242424; --pop-border: rgba(255,255,255,.1);
+      --fg: #ffffff; --fg2: rgba(255,255,255,.62); --fg3: rgba(255,255,255,.4);
+      --sep: rgba(255,255,255,.1); --hover: rgba(255,255,255,.08); --active: rgba(255,255,255,.14);
+      --track: rgba(255,255,255,.14); --card: rgba(255,255,255,.06); --card-on: rgba(255,255,255,.1);
+      --entry: rgba(255,255,255,.08); --win-bg: #1e1e1e; --win-hdr: #303030;
+    }
+    body.light {
+      --pop-bg: #fafafa; --pop-border: rgba(0,0,0,.12);
+      --fg: #2e3436; --fg2: rgba(0,0,0,.6); --fg3: rgba(0,0,0,.38);
+      --sep: rgba(0,0,0,.1); --hover: rgba(0,0,0,.06); --active: rgba(0,0,0,.1);
+      --track: rgba(0,0,0,.12); --card: rgba(0,0,0,.04); --card-on: rgba(0,0,0,.08);
+      --entry: rgba(0,0,0,.06); --win-bg: #fafafa; --win-hdr: #ebebeb;
+    }
+    .pop {
+      position: absolute; top: 6px; right: 12px; z-index: 6;
+      background: var(--pop-bg); color: var(--fg);
+      border: 1px solid var(--pop-border); border-radius: 16px;
+      box-shadow: 0 6px 24px rgba(0,0,0,.35);
+      font-size: 13px; overflow: hidden;
+    }
+    .pop .hdr { display: flex; align-items: center; gap: 8px; padding: 10px 12px 8px 16px; }
+    .pop .hdr h1 { margin: 0; font: 700 15px/1.2 var(--font); flex: 1; }
+    .pop .hdr .stamp { color: var(--fg2); font-size: 12px; }
+    .ibtn {
+      width: 30px; height: 30px; border: 0; border-radius: 15px; background: transparent; color: var(--fg);
+      display: grid; place-items: center; cursor: pointer;
+    }
+    .ibtn:hover { background: var(--hover); }
+    .ibtn.on { background: var(--active); }
+    .ibtn svg { display: block; }
+    .spin { animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .bar { height: 6px; border-radius: 3px; background: var(--track); overflow: hidden; }
+    .bar > span { display: block; height: 100%; border-radius: 3px; }
+    .sep { height: 1px; background: var(--sep); }
+    .link-row {
+      display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 16px; border: 0;
+      background: transparent; color: var(--fg); text-align: left; cursor: pointer; font-size: 13px;
+    }
+    .link-row:hover { background: var(--hover); }
+    .link-row .go { margin-left: auto; color: var(--fg3); }
+    .switch {
+      width: 40px; height: 22px; border-radius: 11px; border: 0; padding: 0; cursor: pointer;
+      background: var(--track); position: relative; flex: none;
+    }
+    .switch::after {
+      content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 8px;
+      background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); transition: left .12s;
+    }
+    .switch.on { background: var(--accent); }
+    .switch.on::after { left: 21px; }
+    .switch:disabled { opacity: .4; cursor: default; }
+    .seg { display: inline-flex; border-radius: 8px; background: var(--card); padding: 2px; }
+    .seg button {
+      border: 0; background: transparent; color: var(--fg2); padding: 4px 10px; border-radius: 6px;
+      font-size: 12px; cursor: pointer;
+    }
+    .seg button.on { background: var(--pop-bg); color: var(--fg); box-shadow: 0 1px 2px rgba(0,0,0,.2); }
+    .pill { font-size: 11px; padding: 1px 7px; border-radius: 99px; background: var(--card-on); color: var(--fg2); }
+    .err-row { display: flex; align-items: center; gap: 8px; color: var(--crit); font-size: 12px; }
+
+    /* ===== fake Adwaita prefs window (shared "prefs.js" stand-in) ===== */
+    .win {
+      position: absolute; z-index: 20; top: 90px; left: 50%; transform: translateX(-50%);
+      width: 520px; max-height: calc(100vh - 160px); display: flex; flex-direction: column;
+      background: var(--win-bg); color: var(--fg); border-radius: 12px; overflow: hidden;
+      box-shadow: 0 12px 40px rgba(0,0,0,.5), 0 0 0 1px rgba(0,0,0,.4);
+      font-size: 13px;
+    }
+    .win .titlebar {
+      height: 46px; display: flex; align-items: center; justify-content: center; position: relative;
+      background: var(--win-hdr); font-weight: 700; flex: none;
+    }
+    .win .titlebar .close {
+      position: absolute; right: 8px; top: 9px; width: 28px; height: 28px; border-radius: 14px;
+      border: 0; background: var(--hover); color: var(--fg); cursor: pointer;
+    }
+    .win .body { overflow: auto; padding: 18px 24px 24px; }
+    .adw-group { margin-bottom: 22px; }
+    .adw-group h3 { margin: 0 0 8px; font: 700 14px var(--font); }
+    .adw-group .desc { margin: -4px 0 8px; color: var(--fg2); font-size: 12px; }
+    .adw-list { border-radius: 10px; overflow: hidden; background: var(--card); }
+    .adw-row {
+      display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 6px 12px;
+      border-bottom: 1px solid var(--sep);
+    }
+    .adw-row:last-child { border-bottom: 0; }
+    .adw-row .t { flex: 1; }
+    .adw-row .t small { display: block; color: var(--fg2); font-size: 11px; margin-top: 2px; }
+    .adw-row input {
+      flex: 1; height: 30px; border: 0; border-radius: 6px; background: var(--entry); color: var(--fg);
+      padding: 0 10px; font: 13px var(--font);
+    }
+    .adw-row .btn {
+      height: 30px; padding: 0 12px; border: 0; border-radius: 6px; background: var(--card-on); color: var(--fg);
+      cursor: pointer; font-size: 12px;
+    }
+    .adw-row .btn.sug { background: var(--accent); color: #fff; }
+    .handle { color: var(--fg3); cursor: grab; }
+
+    /* ===== chrome not part of the design ===== */
+    .badge {
+      position: fixed; top: 44px; left: 12px; z-index: 40; width: 300px;
+      font: 11px/1.4 ui-monospace, monospace;
+      color: #fff; background: rgba(0,0,0,.72); border: 1px solid rgba(255,255,255,.14);
+      border-radius: 8px; padding: 8px 10px;
+    }
+    .badge pre { margin: 6px 0 0; white-space: pre-wrap; }
+    .badge .ctrls { display: flex; flex-wrap: wrap; gap: 4px; }
+    .badge .ctrls button {
+      font: 11px ui-monospace, monospace; border: 1px solid rgba(255,255,255,.3); background: #222; color: #fff;
+      border-radius: 5px; padding: 2px 6px; cursor: pointer;
+    }
+    .ctx {
+      position: fixed; z-index: 30; min-width: 180px; display: none;
+      background: var(--pop-bg); color: var(--fg); border: 1px solid var(--pop-border);
+      border-radius: 12px; padding: 6px; box-shadow: 0 8px 30px rgba(0,0,0,.4);
+    }
+    .ctx.open { display: block; }
+    .ctx button {
+      display: block; width: 100%; text-align: left; background: none; border: 0; color: inherit;
+      font: 13px/30px var(--font); padding: 0 12px; border-radius: 7px; cursor: pointer;
+    }
+    .ctx button:hover { background: var(--hover); }
+    .ctx .sep { margin: 5px 0; }
+    .switcher {
+      position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 50;
+      display: flex; align-items: center; gap: 10px;
+      background: #111; color: #fff; border: 2px solid #fff; border-radius: 999px; padding: 8px 12px;
+      box-shadow: 0 8px 30px rgba(0,0,0,.45); font: 13px/1 var(--font); user-select: none;
+    }
+    .switcher button {
+      width: 28px; height: 28px; border-radius: 50%; border: 1px solid #fff; background: #000; color: #fff; cursor: pointer;
+    }
+    .switcher .label { min-width: 320px; text-align: center; }
+    .explain {
+      position: fixed; right: 16px; bottom: 76px; z-index: 40; width: 380px;
+      font: 12px/1.5 var(--font); color: #fff; background: rgba(0,0,0,.72);
+      border: 1px solid rgba(255,255,255,.14); border-radius: 8px; padding: 10px 12px;
+    }
+    .explain b { display: block; margin-bottom: 4px; }
+
+    /* ===== Variant A: List ===== */
+    .a-pop { width: 360px; }
+    .a-row {
+      display: grid; grid-template-columns: 20px 1fr auto; grid-template-rows: auto auto; column-gap: 12px; row-gap: 5px;
+      align-items: center; width: 100%; padding: 9px 16px; border: 0; background: transparent; color: var(--fg);
+      text-align: left; cursor: pointer;
+    }
+    .a-row:hover { background: var(--hover); }
+    .a-row .ic { grid-row: 1 / span 2; display: grid; place-items: center; }
+    .a-row .name { font-weight: 700; display: flex; align-items: center; gap: 8px; }
+    .a-row .name .win-l { font-weight: 400; color: var(--fg2); font-size: 12px; }
+    .a-row .pct { font-weight: 700; font-size: 14px; text-align: right; }
+    .a-row .reset { color: var(--fg2); font-size: 11px; text-align: right; }
+    .a-row.unpinned .ic, .a-row.unpinned .name { opacity: .6; }
+    .a-detail { padding: 6px 16px 10px; }
+    .a-big { display: flex; align-items: baseline; gap: 8px; margin: 6px 0 4px; }
+    .a-big .n { font: 700 34px/1 var(--font); }
+    .a-big .u { color: var(--fg2); }
+    .a-big .r { margin-left: auto; color: var(--fg2); font-size: 12px; }
+    .a-win { display: grid; grid-template-columns: 1fr auto; row-gap: 5px; column-gap: 10px; padding: 9px 0; border-top: 1px solid var(--sep); }
+    .a-win .l { font-weight: 600; }
+    .a-win .v { font-weight: 700; }
+    .a-win .bar { grid-column: 1 / -1; }
+    .a-win .m { grid-column: 1 / -1; color: var(--fg2); font-size: 11px; }
+    .a-set { padding: 4px 0 6px; }
+    .a-set-row { display: flex; align-items: center; gap: 10px; padding: 7px 16px; }
+    .a-set-row .nm { flex: 1; }
+    .a-set-row .lbl { color: var(--fg2); font-size: 11px; width: 42px; text-align: right; }
+    .a-set-row .ord { display: flex; gap: 2px; }
+    .a-set-row .ord button { width: 22px; height: 22px; border: 0; border-radius: 11px; background: transparent; color: var(--fg2); cursor: pointer; }
+    .a-set-row .ord button:hover { background: var(--hover); }
+    .a-set-row .ord button:disabled { opacity: .25; cursor: default; }
+
+    .a-group { padding: 4px 16px 6px; color: var(--fg2); font-size: 11px; font-weight: 600; letter-spacing: .02em; }
+    .a-prow {
+      display: grid; grid-template-columns: 20px 1fr auto auto; column-gap: 12px; align-items: center;
+      width: 100%; padding: 8px 10px 8px 16px; border: 0; background: transparent; color: var(--fg); text-align: left; cursor: pointer;
+    }
+    .a-prow:hover { background: var(--hover); }
+    .a-prow.off .ic, .a-prow.off .nm { opacity: .5; }
+    .a-prow .nm { font-weight: 600; }
+    .a-prow .st { font-size: 11px; color: var(--fg2); margin-top: 2px; }
+    .a-prow .st.bad { color: var(--crit); }
+    .a-prow .pinb { width: 28px; height: 28px; border: 0; border-radius: 14px; background: transparent; color: var(--fg3); display: grid; place-items: center; cursor: pointer; }
+    .a-prow .pinb:hover { background: var(--active); }
+    .a-prow .pinb.on { color: var(--accent); }
+    .a-prow .grip { color: var(--fg3); cursor: grab; padding: 4px 6px; font-size: 14px; letter-spacing: -2px; }
+    .a-prow.dragging { opacity: .35; }
+    .a-prow.over { box-shadow: inset 0 2px 0 var(--accent); }
+    .a-card { margin: 4px 16px 10px; padding: 12px 14px; border-radius: 12px; background: var(--card); }
+    .a-card .t { font-weight: 700; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+    .a-card .d { color: var(--fg2); font-size: 12px; line-height: 1.45; }
+    .a-card .acts { display: flex; gap: 8px; margin-top: 10px; align-items: center; flex-wrap: wrap; }
+    .btn { height: 32px; padding: 0 14px; border: 0; border-radius: 8px; background: var(--card-on); color: var(--fg); cursor: pointer; font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
+    .btn:hover { background: var(--active); }
+    .btn.sug { background: var(--accent); color: #fff; }
+    .btn.sug:hover { background: #2f6fd0; }
+    .btn.quiet { background: transparent; color: var(--fg2); padding: 0 6px; }
+    .a-entry { flex: 1; min-width: 160px; height: 32px; border: 0; border-radius: 8px; background: var(--entry); color: var(--fg); padding: 0 10px; font: 13px var(--font); }
+    .a-row2 { display: flex; align-items: center; gap: 10px; padding: 9px 16px; }
+    .a-row2 .l { flex: 1; }
+    .a-row2 .l small { display: block; color: var(--fg2); font-size: 11px; margin-top: 2px; }
+    .radio { width: 18px; height: 18px; border-radius: 9px; border: 2px solid var(--fg3); flex: none; position: relative; }
+    .radio.on { border-color: var(--accent); }
+    .radio.on::after { content: ""; position: absolute; inset: 3px; border-radius: 50%; background: var(--accent); }
+    .a-row2.pick { cursor: pointer; }
+    .a-row2.pick:hover { background: var(--hover); }
+    .wait { display: inline-flex; align-items: center; gap: 8px; color: var(--fg2); font-size: 12px; }
+    .wait .dot { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--track); border-top-color: var(--accent); animation: spin .9s linear infinite; }
+
+    /* ===== Variant B: Board ===== */
+    .b-meter { width: 30px; height: 26px; padding: 0; display: grid; grid-template-rows: 1fr 3px; justify-items: center; gap: 2px; border-radius: 6px; }
+    .b-meter .ic { display: grid; place-items: center; align-self: end; }
+    .b-meter .ln { width: 18px; height: 3px; border-radius: 2px; background: rgba(255,255,255,.25); overflow: hidden; }
+    .b-meter .ln span { display: block; height: 100%; }
+    .b-pop { width: 440px; }
+    .b-body { display: flex; flex-direction: column; gap: 6px; padding: 0 10px 10px; max-height: 70vh; overflow: auto; }
+    .b-card { border-radius: 12px; background: var(--card); padding: 10px 12px 8px; border-left: 3px solid var(--card-on); }
+    .b-card.unpinned { opacity: .72; }
+    .b-card .top { display: grid; grid-template-columns: 18px 1fr auto; gap: 10px; align-items: center; }
+    .b-card .nm { font-weight: 700; display: flex; align-items: center; gap: 8px; }
+    .b-card .stamp { color: var(--fg3); font-size: 11px; }
+    .b-card .top .pct { font: 700 20px/1 var(--font); }
+    .b-wins { margin-top: 8px; display: grid; grid-template-columns: 110px 1fr 40px 100px; gap: 6px 10px; align-items: center; font-size: 12px; }
+    .b-wins .l { color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .b-wins .l.pri { font-weight: 700; }
+    .b-wins .v { text-align: right; font-weight: 600; }
+    .b-wins .r { color: var(--fg2); text-align: right; font-size: 11px; white-space: nowrap; }
+    .b-wins .bar { height: 5px; }
+    .b-extra { margin-top: 6px; color: var(--fg2); font-size: 11px; display: flex; gap: 12px; }
+    .b-foot { display: flex; align-items: center; gap: 4px; padding: 6px 10px 8px; }
+    .b-foot .grow { flex: 1; }
+    .b-tip {
+      position: absolute; top: 40px; z-index: 7; padding: 4px 9px; border-radius: 6px; font-size: 12px;
+      background: var(--pop-bg); color: var(--fg); border: 1px solid var(--pop-border); box-shadow: 0 4px 12px rgba(0,0,0,.3);
+      pointer-events: none; white-space: nowrap;
+    }
+
+    /* ===== Variant C: Ring ===== */
+    .c-meter { gap: 4px; padding: 0 6px 0 5px; }
+    .c-pop { width: 420px; }
+    .c-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 2px 12px 12px; }
+    .c-tile {
+      border: 0; border-radius: 14px; background: var(--card); color: var(--fg); text-align: left; cursor: pointer;
+      display: grid; grid-template-columns: 56px 1fr; gap: 10px; padding: 10px; align-items: center; position: relative;
+    }
+    .c-tile:hover { background: var(--card-on); }
+    .c-tile.on { background: var(--card-on); box-shadow: inset 0 0 0 2px var(--accent); }
+    .c-tile.unpinned { opacity: .7; }
+    .c-tile .ring { position: relative; width: 56px; height: 56px; }
+    .c-tile .ring .ic { position: absolute; inset: 0; display: grid; place-items: center; }
+    .c-tile .nm { font-weight: 700; display: flex; gap: 6px; align-items: center; }
+    .c-tile .pct { font: 700 22px/1.1 var(--font); }
+    .c-tile .sub { color: var(--fg2); font-size: 11px; margin-top: 2px; }
+    .c-tile.editing { grid-template-columns: 44px 1fr 44px; cursor: default; }
+    .c-tile.editing .ring { width: 44px; height: 44px; }
+    .c-tile.editing .pct { font-size: 18px; }
+    .c-tile .ctl { display: grid; justify-items: center; gap: 6px; }
+    .c-tile .edit-ord { display: flex; gap: 2px; }
+    .c-tile .edit-ord span { width: 20px; height: 20px; border-radius: 10px; display: grid; place-items: center; background: var(--hover); font-size: 12px; cursor: pointer; }
+    .c-tile .edit-ord span:hover { background: var(--active); }
+    .c-detail { grid-column: 1 / -1; border-radius: 14px; background: var(--card); padding: 12px 14px; }
+    .c-detail .head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .c-detail .head .nm { font-weight: 700; font-size: 14px; flex: 1; }
+    .c-detail .wins { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; }
+    .c-win { display: grid; justify-items: center; gap: 4px; padding: 8px 4px; border-radius: 10px; background: var(--pop-bg); font-size: 11px; }
+    .c-win .l { font-weight: 600; text-align: center; }
+    .c-win .r { color: var(--fg2); text-align: center; }
+    .c-links { display: flex; gap: 6px; margin-top: 10px; }
+    .c-links button { flex: 1; height: 30px; border: 0; border-radius: 8px; background: var(--card-on); color: var(--fg); cursor: pointer; font-size: 12px; }
+    .c-links button:hover { background: var(--active); }
+  </style>
+</head>
+<body class="dark">
+  <div class="wallpaper"></div>
+  <div id="app" style="position:relative;height:100%"></div>
+
+  <div class="badge">
+    <div class="ctrls">
+      <button data-b="theme">主题: <span id="bTheme"></span></button>
+      <button data-b="mode">读法: <span id="bMode"></span></button>
+      <button data-b="refresh">模拟刷新中</button>
+      <button data-b="claude">Claude 429 ⇄ 正常</button>
+      <button data-b="cursor">Cursor 耗尽 ⇄ 原值</button>
+      <button data-b="pop">开/关 Popover</button>
+    </div>
+    <pre id="stateDump"></pre>
+  </div>
+  <div class="explain" id="explain"></div>
+  <div class="ctx" id="ctx">
+    <button data-act="refresh">立即刷新</button>
+    <button data-act="settings">设置…</button>
+    <button data-act="autostart">开机自启</button>
+    <div class="sep"></div>
+    <button data-act="exit">退出 PUB</button>
+  </div>
+  <div class="switcher">
+    <button id="prev" aria-label="previous">←</button>
+    <div class="label" id="switchLabel"></div>
+    <button id="next" aria-label="next">→</button>
+  </div>
+
+  <script>
+    /* throwaway prototype — not production PUB */
+    const VARIANTS = {
+      A: { name: "List · 列表推入（已选）", why: "Strip 图标+等宽数字。Popover 列表 Overview → Detail。设置：Provider 列表每行显示登录状态，Pin 图标一键固定，拖动排序；点行进入该 Provider 页：按凭据类型给「在浏览器中登录」（Claude/Codex/Grok 走官方 CLI 的授权）或「打开页面 + 粘贴」（Cursor cookie / Ollama key），并可选 Primary Window。" },
+      B: { name: "Board · 一屏铺开", why: "Strip 最省地方：只有图标，下缘 3px 细条表示余量，hover 才出数字。Popover 不做任何导航，把全部 Provider 和全部 Quota Window 一次铺开，一眼扫完。Settings 全部去 prefs 窗口，Popover 只留齿轮。" },
+      C: { name: "Ring · 仪表网格", why: "Strip 是小圆环+数字，余量方向一眼可见。Popover 是 2 列仪表 tile，点 tile 就地展开成 Detail，不离开当前页。右上「编辑」进入编辑模式：直接在 tile 上开关 Pinned、调顺序。登录仍走 prefs。" },
+    };
+
+    /* Real snapshot 2026-09-14 16:33 UTC from this machine. */
+    const SNAPSHOT_PROVIDERS = [
+      { id: "claude", name: "Claude", pinned: true, enabled: true, accent: "#C96442", remaining: null, plan: undefined,
+        error: "HTTP 429", credentialSource: "cli", usageUrl: "https://claude.ai/settings/usage", statusUrl: "https://status.anthropic.com",
+        windows: [] },
+      { id: "codex", name: "Codex", pinned: true, enabled: true, accent: "#10a37f", remaining: 0.6, plan: "Pro", credentialSource: "cli",
+        usageUrl: "https://chatgpt.com/#settings", statusUrl: "https://status.openai.com",
+        windows: [
+          { id: "weekly", label: "Weekly", remaining: 0.6, resetLabel: "Resets in 4d 15h", primary: true },
+          { id: "spark-5-hour", label: "Spark · 5-hour", remaining: 1, resetLabel: "Resets in 5h 0m", primary: false },
+          { id: "spark-weekly", label: "Spark · Weekly", remaining: 1, resetLabel: "Resets in 7d 0h", primary: false },
+        ] },
+      { id: "cursor", name: "Cursor", pinned: true, enabled: true, accent: "#111111", remaining: 0.2916942857142857, plan: "Ultra",
+        extraNote: "On-demand off", credentialSource: "pub", usageUrl: "https://cursor.com/dashboard", statusUrl: "https://status.cursor.com",
+        windows: [
+          { id: "cursor-models", label: "Cursor Models", remaining: 0.3403366666666666, resetLabel: "Resets in 2d 1h", primary: false },
+          { id: "other-models", label: "Other Models", remaining: 0, resetLabel: "Resets in 2d 1h", primary: false },
+        ] },
+      { id: "grok", name: "Grok", pinned: true, enabled: true, accent: "#111111", remaining: 0.68, plan: "SuperGrok Heavy", credentialSource: "cli",
+        usageUrl: "https://grok.com/?_s=usage", statusUrl: "https://status.x.ai",
+        windows: [ { id: "weekly", label: "Weekly", remaining: 0.68, resetLabel: "Resets in 5d 23h", primary: true } ] },
+      { id: "ollama-cloud", name: "Ollama Cloud", pinned: false, enabled: true, accent: "#111111", remaining: 0.997, plan: "Cloud", credentialSource: "pub",
+        cost: { month: "$0.00 · last 4 weeks" }, usageUrl: "https://ollama.com", statusUrl: "https://status.ollama.com",
+        windows: [ { id: "monthly", label: "Monthly", remaining: 0.997, resetLabel: "", primary: true } ] },
+    ];
+    const CLAUDE_OK = { remaining: 0.98, plan: "Pro", error: undefined, windows: [
+      { id: "session", label: "Session · 5-hour", remaining: 1, resetLabel: "Resets in 3h 40m", primary: false },
+      { id: "weekly", label: "Weekly", remaining: 0.98, resetLabel: "Resets in 3d 20h", primary: true },
+    ] };
+    const CURSOR_ORIG = JSON.parse(JSON.stringify(SNAPSHOT_PROVIDERS[2]));
+
+    const state = {
+      variant: "A",
+      theme: "dark",
+      popover: true,
+      page: "overview",     // A: overview | detail | settings ; C: edit toggles instead
+      selected: "codex",
+      edit: false,          // C
+      prefs: false,         // fake Adw prefs window
+      ctx: null,
+      remainingMode: true,
+      refreshing: false,
+      exited: false,
+      autostart: true,
+      claudeOk: false,
+      cursorDrained: false,
+      hover: null,          // B tooltip
+      login: null,          // { id, phase: "waiting" | "paste" }
+      drag: null,
+    };
+    /* How each Provider can sign in. cli = the official CLI already owns a browser OAuth flow and writes a file PUB reads. */
+    const LOGIN = {
+      claude: { kind: "cli", cli: "Claude Code", file: "~/.claude/.credentials.json", hint: "Claude access token" },
+      codex: { kind: "cli", cli: "Codex CLI", file: "~/.codex/auth.json", hint: "Codex access token", extra: "Account ID" },
+      grok: { kind: "cli", cli: "Grok CLI", file: "~/.grok/auth.json", hint: "Grok API key / access token" },
+      cursor: { kind: "cookie", page: "https://cursor.com/dashboard", hint: "WorkosCursorSessionToken cookie（userId::token）" },
+      "ollama-cloud": { kind: "key", page: "https://ollama.com/settings/keys", hint: "Ollama API key" },
+    };
+    let providers = JSON.parse(JSON.stringify(SNAPSHOT_PROVIDERS));
+
+    /* ---------- helpers ---------- */
+    const ICONS = {
+      hub: `<svg viewBox="0 0 24 24" width="S" height="S"><circle cx="12" cy="12" r="7.25" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="2.15" fill="currentColor"/><circle cx="12" cy="3.6" r="1.85" fill="currentColor"/><circle cx="20.4" cy="12" r="1.85" fill="currentColor"/><circle cx="12" cy="20.4" r="1.85" fill="currentColor"/><circle cx="3.6" cy="12" r="1.85" fill="currentColor"/></svg>`,
+      claude: `<svg viewBox="0 0 24 24" width="S" height="S"><path fill="currentColor" d="m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z"/></svg>`,
+      codex: `<svg viewBox="-1.2 -1.44 26.6 26.88" width="S" height="S"><path fill="currentColor" d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"/></svg>`,
+      cursor: `<svg viewBox="0.24 -1.44 23.6 26.88" width="S" height="S"><path fill="currentColor" d="M11.503.131 1.891 5.678a.84.84 0 0 0-.42.726v11.188c0 .3.162.575.42.724l9.609 5.55a1 1 0 0 0 .998 0l9.61-5.55a.84.84 0 0 0 .42-.724V6.404a.84.84 0 0 0-.42-.726L12.497.131a1.01 1.01 0 0 0-.996 0M2.657 6.338h18.55c.263 0 .43.287.297.515L12.23 22.918c-.062.107-.229.064-.229-.06V12.335a.59.59 0 0 0-.295-.51l-9.11-5.257c-.109-.063-.064-.23.061-.23"/></svg>`,
+      grok: `<svg viewBox="-33.7 -30.4 629.4 604.9" width="S" height="S"><path fill="currentColor" d="M411 105C376 80 334 66 289 66C173 66 79 160 79 276C79 306 85 329 95 353C117 407 87 451 0 542L178 383C150 355 134 318 134 277C134 192 203 123 289 123C310 123 330 127 348 134Z"/><path fill="currentColor" d="M167 448L230 418C248 426 268 430 289 430C374 430 443 361 443 277C443 256 439 234 431 214C427 206 416 204 407 210L217 349L562 2C480 103 475 144 494 229C518 333 468 422 391 459C319 494 235 498 167 448Z"/></svg>`,
+      "ollama-cloud": `<svg viewBox="0 0 24 24" width="S" height="S"><path fill="currentColor" d="M16.361 10.26a.894.894 0 0 0-.558.47l-.072.148.001.207c0 .193.004.217.059.353.076.193.152.312.291.448.24.238.51.3.872.205a.86.86 0 0 0 .517-.436.752.752 0 0 0 .08-.498c-.064-.453-.33-.782-.724-.897a1.06 1.06 0 0 0-.466 0zm-9.203.005c-.305.096-.533.32-.65.639a1.187 1.187 0 0 0-.06.52c.057.309.31.59.598.667.362.095.632.033.872-.205.14-.136.215-.255.291-.448.055-.136.059-.16.059-.353l.001-.207-.072-.148a.894.894 0 0 0-.565-.472 1.02 1.02 0 0 0-.474.007Zm4.184 2c-.131.071-.223.25-.195.383.031.143.157.288.353.407.105.063.112.072.117.136.004.038-.01.146-.029.243-.02.094-.036.194-.036.222.002.074.07.195.143.253.064.052.076.054.255.059.164.005.198.001.264-.03.169-.082.212-.234.15-.525-.052-.243-.042-.28.087-.355.137-.08.281-.219.324-.314a.365.365 0 0 0-.175-.48.394.394 0 0 0-.181-.033c-.126 0-.207.03-.355.124l-.085.053-.053-.032c-.219-.13-.259-.145-.391-.143a.396.396 0 0 0-.193.032zm.39-2.195c-.373.036-.475.05-.654.086-.291.06-.68.195-.951.328-.94.46-1.589 1.226-1.787 2.114-.04.176-.045.234-.045.53 0 .294.005.357.043.524.264 1.16 1.332 2.017 2.714 2.173.3.033 1.596.033 1.896 0 1.11-.125 2.064-.727 2.493-1.571.114-.226.169-.372.22-.602.039-.167.044-.23.044-.523 0-.297-.005-.355-.045-.531-.288-1.29-1.539-2.304-3.072-2.497a6.873 6.873 0 0 0-.855-.031zm.645.937a3.283 3.283 0 0 1 1.44.514c.223.148.537.458.671.662.166.251.26.508.303.82.02.143.01.251-.043.482-.08.345-.332.705-.672.957a3.115 3.115 0 0 1-.689.348c-.382.122-.632.144-1.525.138-.582-.006-.686-.01-.853-.042-.57-.107-1.022-.334-1.35-.68-.264-.28-.385-.535-.45-.946-.03-.192.025-.509.137-.776.136-.326.488-.73.836-.963.403-.269.934-.46 1.422-.512.187-.02.586-.02.773-.002zm-5.503-11a1.653 1.653 0 0 0-.683.298C5.617.74 5.173 1.666 4.985 2.819c-.07.436-.119 1.04-.119 1.503 0 .544.064 1.24.155 1.721.02.107.031.202.023.208a8.12 8.12 0 0 1-.187.152 5.324 5.324 0 0 0-.949 1.02 5.49 5.49 0 0 0-.94 2.339 6.625 6.625 0 0 0-.023 1.357c.091.78.325 1.438.727 2.04l.13.195-.037.064c-.269.452-.498 1.105-.605 1.732-.084.496-.095.629-.095 1.294 0 .67.009.803.088 1.266.095.555.288 1.143.503 1.534.071.128.243.393.264.407.007.003-.014.067-.046.141a7.405 7.405 0 0 0-.548 1.873c-.062.417-.071.552-.071.991 0 .56.031.832.148 1.279L3.42 24h1.478l-.05-.091c-.297-.552-.325-1.575-.068-2.597.117-.472.25-.819.498-1.296l.148-.29v-.177c0-.165-.003-.184-.057-.293a.915.915 0 0 0-.194-.25 1.74 1.74 0 0 1-.385-.543c-.424-.92-.506-2.286-.208-3.451.124-.486.329-.918.544-1.154a.787.787 0 0 0 .223-.531c0-.195-.07-.355-.224-.522a3.136 3.136 0 0 1-.817-1.729c-.14-.96.114-2.005.69-2.834.563-.814 1.353-1.336 2.237-1.475.199-.033.57-.028.776.01.226.04.367.028.512-.041.179-.085.268-.19.374-.431.093-.215.165-.333.36-.576.234-.29.46-.489.822-.729.413-.27.884-.467 1.352-.561.17-.035.25-.04.569-.04.319 0 .398.005.569.04a4.07 4.07 0 0 1 1.914.997c.117.109.398.457.488.602.034.057.095.177.132.267.105.241.195.346.374.43.14.068.286.082.503.045.343-.058.607-.053.943.016 1.144.23 2.14 1.173 2.581 2.437.385 1.108.276 2.267-.296 3.153-.097.15-.193.27-.333.419-.301.322-.301.722-.001 1.053.493.539.801 1.866.708 3.036-.062.772-.26 1.463-.533 1.854a2.096 2.096 0 0 1-.224.258.916.916 0 0 0-.194.25c-.054.109-.057.128-.057.293v.178l.148.29c.248.476.38.823.498 1.295.253 1.008.231 2.01-.059 2.581a.845.845 0 0 0-.044.098c0 .006.329.009.732.009h.73l.02-.074.036-.134c.019-.076.057-.3.088-.516.029-.217.029-1.016 0-1.258-.11-.875-.295-1.57-.597-2.226-.032-.074-.053-.138-.046-.141.008-.005.057-.074.108-.152.376-.569.607-1.284.724-2.228.031-.26.031-1.378 0-1.628-.083-.645-.182-1.082-.348-1.525a6.083 6.083 0 0 0-.329-.7l-.038-.064.131-.194c.402-.604.636-1.262.727-2.04a6.625 6.625 0 0 0-.024-1.358 5.512 5.512 0 0 0-.939-2.339 5.325 5.325 0 0 0-.95-1.02 8.097 8.12 0 0 1-.186-.152.692.692 0 0 1 .023-.208c.208-1.087.201-2.443-.017-3.503-.19-.924-.535-1.658-.98-2.082-.354-.338-.716-.482-1.15-.455-.996.059-1.8 1.205-2.116 3.01a6.805 6.805 0 0 0-.097.726c0 .036-.007.066-.015.066a.96.96 0 0 1-.149-.078A4.857 4.857 0 0 0 12 3.03c-.832 0-1.687.243-2.456.698a.958.958 0 0 1-.148.078c-.008 0-.015-.03-.015-.066a6.71 6.71 0 0 0-.097-.725C8.997 1.392 8.337.319 7.46.048a2.096 2.096 0 0 0-.585-.041Zm.293 1.402c.248.197.523.759.682 1.388.03.113.06.244.069.292.007.047.026.152.041.233.067.365.098.76.102 1.24l.002.475-.12.175-.118.178h-.278c-.324 0-.646.041-.954.124l-.238.06c-.033.007-.038-.003-.057-.144a8.438 8.438 0 0 1 .016-2.323c.124-.788.413-1.501.696-1.711.067-.05.079-.049.157.013zm9.825-.012c.17.126.358.46.498.888.28.854.36 2.028.212 3.145-.019.14-.024.151-.057.144l-.238-.06a3.693 3.693 0 0 0-.954-.124h-.278l-.119-.178-.119-.175.002-.474c.004-.669.066-1.19.214-1.772.157-.623.434-1.185.68-1.382.078-.062.09-.063.159-.012z"/></svg>`,
+      gear: `<svg viewBox="0 0 24 24" width="S" height="S"><path fill="currentColor" d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.03 7.03 0 0 0-1.63-.94l-.36-2.54A.49.49 0 0 0 13.9 2h-3.8a.49.49 0 0 0-.49.42l-.36 2.54c-.59.24-1.13.55-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.48a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94L2.83 14.16a.5.5 0 0 0-.12.64l1.92 3.32c.13.23.4.32.64.22l2.39-.96c.5.39 1.04.7 1.63.94l.36 2.54c.05.24.25.42.49.42h3.8c.24 0 .44-.18.49-.42l.36-2.54c.59-.24 1.13-.55 1.63-.94l2.39.96c.24.1.51 0 .64-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"/></svg>`,
+      refresh: `<svg viewBox="0 0 24 24" width="S" height="S"><path fill="currentColor" d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4z"/></svg>`,
+      back: `<svg viewBox="0 0 24 24" width="S" height="S"><path fill="currentColor" d="M15.5 4.5 8 12l7.5 7.5 1.4-1.4L10.8 12l6.1-6.1z"/></svg>`,
+      warn: `<svg viewBox="0 0 24 24" width="S" height="S"><path fill="currentColor" d="M12 2 1 21h22zm1 15h-2v-2h2zm0-4h-2V9h2z"/></svg>`,
+      pin: `<svg viewBox="0 0 24 24" width="S" height="S"><path fill="currentColor" d="M16 3v2h-1v6l2 2v2h-4v6h-2v-6H7v-2l2-2V5H8V3z"/></svg>`,
+    };
+    const icon = (id, s) => (ICONS[id] || "").replaceAll('"S"', `"${s || 16}"`);
+
+    const pctNum = (rem) => rem == null ? null : Math.round((state.remainingMode ? rem : 1 - rem) * 100);
+    const pct = (rem) => rem == null ? "—" : `${pctNum(rem)}%`;
+    const frac = (rem) => rem == null ? 0 : (state.remainingMode ? rem : 1 - rem);
+    const toneOf = (rem) => rem == null ? "none" : rem <= 0.05 ? "crit" : rem <= 0.2 ? "warn" : "ok";
+    const toneColor = (rem, okColor) => ({ none: "var(--fg3)", crit: "var(--crit)", warn: "var(--warn)", ok: okColor || "var(--accent)" })[toneOf(rem)];
+    const toneClass = (rem) => ({ none: "t-dim", crit: "t-crit", warn: "t-warn", ok: "" })[toneOf(rem)];
+    const enabled = () => providers.filter((p) => p.enabled);
+    const pinned = () => enabled().filter((p) => p.pinned);
+    const primary = (p) => p.windows.find((w) => w.primary) || p.windows[0] || null;
+    const modeWord = () => state.remainingMode ? "left" : "used";
+    const stamp = () => state.refreshing ? "正在刷新…" : "更新于 3 分钟前";
+    const accentOf = (p) => (p.accent === "#111111" || p.accent === "#111") ? "var(--accent)" : p.accent;
+
+    function bar(rem, h, color) {
+      return `<div class="bar" style="${h ? `height:${h}px` : ""}"><span style="width:${frac(rem) * 100}%;background:${color || toneColor(rem)}"></span></div>`;
+    }
+    function ring(rem, size, stroke, color) {
+      const r = (size - stroke) / 2, c = 2 * Math.PI * r, d = c * frac(rem);
+      return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+        <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="var(--track)" stroke-width="${stroke}"/>
+        <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="${color || toneColor(rem)}" stroke-width="${stroke}"
+          stroke-linecap="round" stroke-dasharray="${d} ${c}" transform="rotate(-90 ${size/2} ${size/2})"/></svg>`;
+    }
+    function errText(p) {
+      if (p.error === "signed out") return "未登录";
+      if (p.error) return `抓取失败 · ${p.error}`;
+      return "";
+    }
+    function panelShell(stripHtml, popHtml) {
+      return `
+        <div class="panel">
+          <span class="activities">Activities</span>
+          <span class="clock">9月15日 00:12</span>
+          <div style="display:flex;align-items:center;gap:2px">${state.exited ? "" : stripHtml}</div>
+          <div class="sys"><span>⏻</span></div>
+        </div>
+        ${state.popover && !state.exited ? popHtml : ""}
+        ${state.prefs ? prefsWindow() : ""}`;
+    }
+    function ctrlBtn(extra) {
+      return `<button class="panel-btn${state.popover ? " on" : ""} ${extra || ""}" data-ctrl="1" title="PUB">${icon("hub", 16)}</button>`;
+    }
+    function hdr(title, buttons) {
+      return `<div class="hdr"><h1>${title}</h1><span class="stamp">${stamp()}</span>${buttons}</div>`;
+    }
+    const refreshBtn = () => `<button class="ibtn" data-act="refresh" title="立即刷新"><span class="${state.refreshing ? "spin" : ""}" style="display:grid">${icon("refresh", 16)}</span></button>`;
+    const gearBtn = (act) => `<button class="ibtn${state.page === "settings" || state.edit ? " on" : ""}" data-act="${act}" title="设置">${icon("gear", 16)}</button>`;
+    const modeSeg = () => `<span class="seg"><button data-mode="1" class="${state.remainingMode ? "on" : ""}">剩余</button><button data-mode="0" class="${state.remainingMode ? "" : "on"}">已用</button></span>`;
+    const footLinks = (p) => `
+      <div class="sep"></div>
+      <button class="link-row" data-url="${p.usageUrl}">打开 ${p.name} 用量页<span class="go">↗</span></button>
+      <button class="link-row" data-url="${p.statusUrl}">打开状态页<span class="go">↗</span></button>`;
+
+    /* ---------- shared fake prefs.js window ---------- */
+    function prefsWindow() {
+      const full = state.variant === "B";
+      const rows = providers.map((p, i) => `
+        <div class="adw-row">
+          ${full ? `<span class="handle">⋮⋮</span>` : ""}
+          <span style="display:grid;place-items:center;width:18px">${icon(p.id, 16)}</span>
+          <div class="t">${p.name}<small>${p.credentialSource === "pub" ? "PUB 凭据" : p.credentialSource === "cli" ? "读取官方 CLI 登录" : "未登录"}${p.plan ? ` · ${p.plan}` : ""}</small></div>
+          ${full ? `<span class="lbl" style="color:var(--fg2);font-size:11px">Enabled</span><button class="switch${p.enabled ? " on" : ""}" data-en="${p.id}"></button>
+                   <span class="lbl" style="color:var(--fg2);font-size:11px">Pinned</span><button class="switch${p.pinned ? " on" : ""}" data-pin="${p.id}" ${p.enabled ? "" : "disabled"}></button>` : ""}
+        </div>`).join("");
+      const logins = providers.map((p) => `
+        <div class="adw-group">
+          <h3>${p.name}</h3>
+          <div class="adw-list">
+            <div class="adw-row"><div class="t">Access token<small>${p.credentialSource === "pub" ? "已保存于 ~/.config/pub/credentials.json" : "留空则回退到官方 CLI 的登录"}</small></div><input type="password" placeholder="粘贴 token" value="${p.credentialSource === "pub" ? "••••••••••••" : ""}" /><button class="btn sug">保存</button><button class="btn">清除</button></div>
+            ${p.id === "codex" ? `<div class="adw-row"><div class="t">Account ID</div><input placeholder="Codex account ID" /></div>` : ""}
+            ${p.id === "cursor" ? `<div class="adw-row"><div class="t">User ID<small>可空</small></div><input placeholder="Cursor user ID" /></div>` : ""}
+          </div>
+        </div>`).join("");
+      return `
+        <div class="win">
+          <div class="titlebar">PUB 设置<button class="close" data-act="prefs-close">✕</button></div>
+          <div class="body">
+            ${full ? `
+              <div class="adw-group"><h3>Strip</h3><div class="adw-list">
+                <div class="adw-row"><div class="t">百分比读法<small>Strip 与 Overview 同时生效</small></div>${modeSeg()}</div>
+                <div class="adw-row"><div class="t">登录时启动</div><button class="switch${state.autostart ? " on" : ""}" data-act="autostart"></button></div>
+              </div></div>
+              <div class="adw-group"><h3>Provider</h3><p class="desc">拖动调整 Overview 与 Strip 的顺序。Enabled 才抓取；Pinned 才上 Strip。</p><div class="adw-list">${rows}</div></div>` : `
+              <div class="adw-group"><h3>账号</h3><p class="desc">token 只写入 ~/.config/pub/credentials.json，不经过 DSH，也不必安装官方 CLI。</p></div>`}
+            ${logins}
+          </div>
+        </div>`;
+    }
+
+    /* ===================== Variant A: List ===================== */
+    function variantA() {
+      const strip = ctrlBtn() + pinned().map((p) => `
+        <button class="panel-btn${state.popover && state.page === "detail" && state.selected === p.id ? " on" : ""}" data-open="${p.id}" title="${p.name}">
+          <span style="display:grid;${p.error ? "opacity:.55" : ""}">${icon(p.id, 16)}</span>
+          <span class="num ${toneClass(p.remaining)}" style="font-weight:700;font-size:12.5px">${p.error ? "!" : pct(p.remaining)}</span>
+        </button>`).join("");
+
+      let body;
+      if (state.page === "overview") {
+        body = hdr("PUB", refreshBtn() + gearBtn("settings")) + `<div class="sep"></div>` +
+          enabled().map((p) => {
+            const w = primary(p);
+            return `<button class="a-row${p.pinned ? "" : " unpinned"}" data-sel="${p.id}">
+              <span class="ic">${icon(p.id, 18)}</span>
+              <span class="name">${p.name}${w ? `<span class="win-l">${w.label}</span>` : ""}${p.pinned ? "" : `<span class="pill">未 Pin</span>`}</span>
+              <span class="pct num ${toneClass(p.remaining)}">${p.error ? icon("warn", 16) : pct(p.remaining)}</span>
+              ${p.error ? `<span class="err-row" style="grid-column:2 / span 2">${errText(p)}</span>` : `${bar(p.remaining, 5)}<span class="reset">${w?.resetLabel || ""}</span>`}
+            </button>`;
+          }).join("") +
+          `<div class="sep"></div><div style="padding:8px 16px 10px;display:flex;align-items:center;gap:8px;color:var(--fg2);font-size:11px">读法${modeSeg()}<span style="margin-left:auto">${pinned().length} / ${enabled().length} 在 Strip 上</span></div>`;
+      } else if (state.page === "detail") {
+        const p = providers.find((x) => x.id === state.selected) || providers[0];
+        const w = primary(p);
+        body = `<div class="hdr"><button class="ibtn" data-act="back">${icon("back", 16)}</button><h1 style="display:flex;align-items:center;gap:8px">${icon(p.id, 16)} ${p.name}${p.plan ? `<span class="pill">${p.plan}</span>` : ""}</h1><span class="stamp">${stamp()}</span>${refreshBtn()}</div>
+          <div class="a-detail">
+            ${p.error ? `<div class="err-row" style="padding:8px 0 12px;font-size:13px">${icon("warn", 16)} ${errText(p)}<span style="color:var(--fg2);margin-left:auto">${p.error === "HTTP 429" ? "稍后自动重试" : ""}</span></div>` :
+              w ? `<div class="a-big"><span class="n num ${toneClass(w.remaining)}">${pct(w.remaining)}</span><span class="u">${modeWord()} · ${w.label}</span><span class="r">${w.resetLabel}</span></div>${bar(w.remaining, 8)}` : ""}
+            <div style="margin-top:10px">
+              ${p.windows.filter((x) => x !== w).map((x) => `<div class="a-win"><span class="l">${x.label}</span><span class="v num ${toneClass(x.remaining)}">${pct(x.remaining)} ${modeWord()}</span>${bar(x.remaining, 5)}<span class="m">${x.resetLabel || "—"}</span></div>`).join("")}
+              ${p.extraNote ? `<div class="a-win"><span class="l">Extra usage</span><span class="v" style="color:var(--fg2)">${p.extraNote}</span></div>` : ""}
+              ${p.cost?.month ? `<div class="a-win"><span class="l">Cost</span><span class="v" style="color:var(--fg2)">${p.cost.month}</span></div>` : ""}
+            </div>
+          </div>${footLinks(p)}`;
+      } else if (state.page === "provider") {
+        body = providerPageA();
+      } else {
+        body = `<div class="hdr"><button class="ibtn" data-act="back">${icon("back", 16)}</button><h1>设置</h1></div>
+          <div class="a-row2"><span class="l">百分比读法<small>Strip 与 Overview 同时生效</small></span>${modeSeg()}</div>
+          <div class="a-row2"><span class="l">登录时启动</span><button class="switch${state.autostart ? " on" : ""}" data-act="autostart"></button></div>
+          <div class="sep" style="margin:4px 16px 6px"></div>
+          <div class="a-group">PROVIDER · 拖动调整顺序</div>
+          ${providers.map((p, i) => `<div class="a-prow${p.enabled ? "" : " off"}" data-prov="${p.id}" draggable="true" data-idx="${i}">
+              <span class="ic" style="display:grid">${icon(p.id, 18)}</span>
+              <span><span class="nm">${p.name}</span><span class="st${p.error && p.enabled ? " bad" : ""}" style="display:block">${loginStatus(p)}</span></span>
+              <button class="pinb${p.pinned ? " on" : ""}" data-pin="${p.id}" title="${p.pinned ? "从 Strip 移除" : "固定到 Strip"}" ${p.enabled ? "" : "disabled"}>${icon("pin", 16)}</button>
+              <span class="grip" title="拖动排序">⋮⋮</span>
+            </div>`).join("")}
+          <div style="padding:6px 16px 10px;color:var(--fg3);font-size:11px">${pinned().length} 个在 Strip 上 · 点行进入该 Provider 的登录与显示设置</div>`;
+      }
+      return panelShell(strip, `<div class="pop a-pop">${body}</div>`);
+    }
+
+    function loginStatus(p) {
+      if (!p.enabled) return "已停用 · 不抓取";
+      if (p.error === "signed out" || (!p.credentialSource && p.remaining == null)) return "未登录";
+      const via = p.credentialSource === "cli" ? `通过 ${LOGIN[p.id]?.cli || "官方 CLI"}` : "PUB 保存的凭据";
+      const plan = p.plan ? ` · ${p.plan}` : "";
+      if (p.error) return `已登录 · ${via}${plan} · 抓取失败 ${p.error}`;
+      return `已登录 · ${via}${plan}`;
+    }
+    function providerPageA() {
+      const p = providers.find((x) => x.id === state.selected) || providers[0];
+      const L = LOGIN[p.id];
+      const lg = state.login && state.login.id === p.id ? state.login : null;
+      const signedIn = !!p.credentialSource && p.error !== "signed out";
+      let loginCard;
+      if (lg && lg.phase === "waiting") {
+        loginCard = `<div class="a-card"><div class="t">${icon(p.id, 16)} 正在浏览器中登录</div>
+          <div class="d">${L.kind === "cli" ? `已通过 ${L.cli} 打开授权页面。完成授权后会自动写入 ${L.file}，PUB 随即读取。` : `已打开 ${L.page}。`}</div>
+          <div class="acts"><span class="wait"><span class="dot"></span>等待授权…</span><span style="flex:1"></span><button class="btn quiet" data-act="login-cancel">取消</button></div></div>`;
+      } else if (lg && lg.phase === "paste") {
+        loginCard = `<div class="a-card"><div class="t">粘贴凭据</div>
+          <div class="d">${L.kind === "cookie" ? "在浏览器登录 cursor.com 后，从开发者工具复制 cookie。" : L.kind === "key" ? "在 ollama.com 创建一个 API key 并粘贴。" : `手动方式。通常不需要，${L.cli} 登录后 PUB 会自动读取。`}</div>
+          <div class="acts"><input class="a-entry" type="password" placeholder="${L.hint}" />${L.extra ? `<input class="a-entry" placeholder="${L.extra}" />` : ""}</div>
+          <div class="acts"><button class="btn sug" data-act="login-save">保存</button><button class="btn quiet" data-act="login-cancel">取消</button></div></div>`;
+      } else {
+        const status = signedIn
+          ? `<div class="t">${icon(p.id, 16)} 已登录${p.plan ? `<span class="pill">${p.plan}</span>` : ""}</div><div class="d">${p.credentialSource === "cli" ? `凭据来自 ${L.cli}（${L.file}）。` : "凭据由 PUB 保存在 ~/.config/pub/credentials.json，权限 600。"}${p.error ? ` <span style="color:var(--crit)">上次抓取失败：${p.error}。</span>` : ""}</div>`
+          : `<div class="t">${icon(p.id, 16)} 未登录</div><div class="d">${L.kind === "cli" ? `${L.cli} 会打开浏览器完成授权，PUB 只读取它写下的凭据，不需要你复制任何 token。` : L.kind === "cookie" ? "Cursor 没有公开的授权接口，需要从已登录的浏览器复制 cookie。" : "Ollama Cloud 用 API key，在网页里创建后粘贴即可。"}</div>`;
+        const primaryBtn = L.kind === "cli"
+          ? `<button class="btn sug" data-act="login-browser">在浏览器中登录 ↗</button>`
+          : `<button class="btn sug" data-act="login-open">打开 ${L.kind === "cookie" ? "cursor.com" : "ollama.com"} ↗</button>`;
+        loginCard = `<div class="a-card">${status}<div class="acts">
+          ${signedIn ? `<button class="btn" data-act="login-out">退出登录</button>` : primaryBtn}
+          <button class="btn quiet" data-act="login-paste">${signedIn ? "换一个凭据…" : "手动粘贴…"}</button></div></div>`;
+      }
+      const wins = p.windows.length ? p.windows : [{ id: "primary", label: "（登录后显示）", primary: true }];
+      return `<div class="hdr"><button class="ibtn" data-act="back-settings">${icon("back", 16)}</button><h1 style="display:flex;align-items:center;gap:8px">${p.name}</h1></div>
+        ${loginCard}
+        <div class="a-group">显示</div>
+        <div class="a-row2"><span class="l">监视此 Provider<small>关闭后不再抓取，也不出现在 Overview</small></span><button class="switch${p.enabled ? " on" : ""}" data-en="${p.id}"></button></div>
+        <div class="a-row2"><span class="l">固定到 Strip</span><button class="switch${p.pinned ? " on" : ""}" data-pin="${p.id}" ${p.enabled ? "" : "disabled"}></button></div>
+        <div class="a-group" style="padding-top:8px">PRIMARY WINDOW · Strip 与 Overview 显示这一项</div>
+        ${wins.map((w) => `<div class="a-row2 pick" data-primary="${p.id}:${w.id}"><span class="radio${w.primary ? " on" : ""}"></span><span class="l">${w.label}${w.resetLabel ? `<small>${w.resetLabel}</small>` : ""}</span>${w.remaining != null ? `<span class="num ${toneClass(w.remaining)}" style="font-weight:600">${pct(w.remaining)}</span>` : ""}</div>`).join("")}
+        <div class="sep" style="margin-top:6px"></div>
+        <button class="link-row" data-url="${p.usageUrl}">打开 ${p.name} 用量页<span class="go">↗</span></button>`;
+    }
+
+    /* ===================== Variant B: Board ===================== */
+    function variantB() {
+      const strip = ctrlBtn() + pinned().map((p) => `
+        <button class="panel-btn b-meter" data-hover="${p.id}" title="" style="${p.error ? "opacity:.6" : ""}">
+          <span class="ic">${icon(p.id, 16)}</span>
+          <span class="ln"><span style="width:${frac(p.remaining) * 100}%;background:${p.error ? "transparent" : toneOf(p.remaining) === "ok" ? "#fff" : toneColor(p.remaining)}"></span></span>
+        </button>`).join("");
+      const hov = state.hover && providers.find((p) => p.id === state.hover);
+      const tip = hov ? `<div class="b-tip" style="right:${60 + 32 * (pinned().length - pinned().indexOf(hov) - 1)}px">${hov.name} · ${hov.error ? errText(hov) : `${pct(hov.remaining)} ${modeWord()} · ${primary(hov)?.resetLabel || ""}`}</div>` : "";
+
+      const cards = enabled().map((p) => {
+        const w = primary(p);
+        return `<div class="b-card${p.pinned ? "" : " unpinned"}" style="border-left-color:${p.error ? "var(--crit)" : accentOf(p)}">
+          <div class="top">
+            <span style="display:grid">${icon(p.id, 18)}</span>
+            <span class="nm">${p.name}${p.plan ? `<span class="pill">${p.plan}</span>` : ""}${p.pinned ? "" : `<span class="pill">未 Pin</span>`}<span class="stamp" style="margin-left:auto;padding-right:8px">${w?.resetLabel || ""}</span></span>
+            <span class="pct num ${toneClass(p.remaining)}">${p.error ? icon("warn", 18) : pct(p.remaining)}</span>
+          </div>
+          ${p.error ? `<div class="err-row" style="margin-top:6px">${errText(p)} · <a href="#" data-url="${p.usageUrl}" style="color:inherit">打开用量页</a></div>` : `
+          <div class="b-wins">
+            ${p.windows.map((x) => `<span class="l${x.primary ? " pri" : ""}">${x.label}</span>${bar(x.remaining, 5, x.primary ? accentOf(p) === "var(--accent)" ? toneColor(x.remaining) : toneOf(x.remaining) === "ok" ? accentOf(p) : toneColor(x.remaining) : toneColor(x.remaining, "var(--fg3)"))}<span class="v num ${toneClass(x.remaining)}">${pct(x.remaining)}</span><span class="r">${x.resetLabel || "—"}</span>`).join("")}
+          </div>
+          ${p.extraNote || p.cost?.month ? `<div class="b-extra">${p.extraNote ? `<span>Extra usage: ${p.extraNote}</span>` : ""}${p.cost?.month ? `<span>Cost: ${p.cost.month}</span>` : ""}</div>` : ""}`}
+        </div>`;
+      }).join("");
+      const body = hdr("Plan Quota", refreshBtn()) +
+        `<div class="b-body">${cards}</div>
+         <div class="sep"></div>
+         <div class="b-foot">${modeSeg()}<span class="grow"></span><button class="link-row" data-act="prefs" style="width:auto;padding:6px 10px;border-radius:8px">${icon("gear", 15)} 设置</button></div>`;
+      return panelShell(strip, `<div class="pop b-pop">${body}</div>${tip}`);
+    }
+
+    /* ===================== Variant C: Ring ===================== */
+    function variantC() {
+      const strip = ctrlBtn() + pinned().map((p) => `
+        <button class="panel-btn c-meter${state.popover && state.selected === p.id ? " on" : ""}" data-open="${p.id}" title="${p.name}">
+          <span style="position:relative;width:18px;height:18px;display:grid;place-items:center">
+            ${p.error ? `<span style="color:var(--crit);display:grid">${icon("warn", 14)}</span>` : ring(p.remaining, 18, 3, toneOf(p.remaining) === "ok" ? "#fff" : toneColor(p.remaining))}
+          </span>
+          <span class="num ${toneClass(p.remaining)}" style="font-weight:700;font-size:12px">${p.error ? "" : pct(p.remaining)}</span>
+        </button>`).join("");
+
+      const list = state.edit ? providers : enabled();
+      const tiles = list.map((p, i) => {
+        const w = primary(p);
+        const on = !state.edit && state.selected === p.id;
+        const tag = state.edit ? "div" : "button";
+        const rs = state.edit ? 44 : 56;
+        return `<${tag} class="c-tile${on ? " on" : ""}${p.pinned ? "" : " unpinned"}${state.edit ? " editing" : ""}" data-sel="${p.id}">
+          <span class="ring">${ring(p.remaining, rs, 5, toneOf(p.remaining) === "ok" ? accentOf(p) : undefined)}<span class="ic">${p.error ? `<span style="color:var(--crit);display:grid">${icon("warn", 20)}</span>` : icon(p.id, 20)}</span></span>
+          <span>
+            <span class="nm">${p.name}</span>
+            <span class="pct num ${toneClass(p.remaining)}" style="display:block">${p.error ? "—" : pct(p.remaining)}</span>
+            <span class="sub" style="display:block">${p.error ? errText(p) : `${w?.label || ""} · ${w?.resetLabel || modeWord()}`}</span>
+          </span>
+          ${state.edit ? `<span class="ctl"><button class="switch${p.pinned ? " on" : ""}" data-pin="${p.id}" ${p.enabled ? "" : "disabled"}></button>
+            <span class="edit-ord"><span data-mv="${i}:-1">↑</span><span data-mv="${i}:1">↓</span></span></span>` : ""}
+        </${tag}>` + (on ? detailC(p) : "");
+      }).join("");
+
+      const body = hdr("PUB", (state.edit ? "" : refreshBtn()) + `<button class="ibtn${state.edit ? " on" : ""}" data-act="edit" title="编辑" style="${state.edit ? "width:auto;padding:0 12px;font-size:12px;font-weight:700" : ""}">${state.edit ? "完成" : icon("gear", 16)}</button>`) +
+        (state.edit ? `<div style="padding:0 14px 8px;display:flex;align-items:center;gap:10px;color:var(--fg2);font-size:11px">读法${modeSeg()}<span style="margin-left:auto">开关 = Pinned；↑↓ 调 Strip 与网格顺序</span></div>` : "") +
+        `<div class="c-grid">${tiles}</div>` +
+        (state.edit ? `<div class="sep"></div><button class="link-row" data-act="prefs">Enabled 与账号登录…<span class="go">↗ 设置窗口</span></button>` : "");
+      return panelShell(strip, `<div class="pop c-pop">${body}</div>`);
+    }
+    function detailC(p) {
+      const w = primary(p);
+      return `<div class="c-detail">
+        <div class="head"><span class="nm">${p.name}${p.plan ? ` <span class="pill">${p.plan}</span>` : ""}</span><span class="stamp" style="color:var(--fg2);font-size:11px">${stamp()}</span></div>
+        ${p.error ? `<div class="err-row">${icon("warn", 16)} ${errText(p)}</div>` : `<div class="wins">
+          ${p.windows.map((x) => `<div class="c-win" style="${x.primary ? "box-shadow:inset 0 0 0 1px var(--sep)" : ""}">
+            <span style="position:relative;display:grid;place-items:center">${ring(x.remaining, 44, 4)}<span class="num ${toneClass(x.remaining)}" style="position:absolute;font-weight:700;font-size:11px">${pct(x.remaining)}</span></span>
+            <span class="l">${x.label}${x.primary ? " ★" : ""}</span><span class="r">${x.resetLabel || "—"}</span></div>`).join("")}
+          ${p.extraNote ? `<div class="c-win"><span class="l">Extra</span><span class="r">${p.extraNote}</span></div>` : ""}
+          ${p.cost?.month ? `<div class="c-win"><span class="l">Cost</span><span class="r">${p.cost.month}</span></div>` : ""}
+        </div>`}
+        <div class="c-links"><button data-url="${p.usageUrl}">用量页 ↗</button><button data-url="${p.statusUrl}">状态页 ↗</button></div>
+      </div>`;
+    }
+
+    /* ---------- render / wire ---------- */
+    const app = document.getElementById("app");
+    function render() {
+      document.body.className = state.theme;
+      app.innerHTML = { A: variantA, B: variantB, C: variantC }[state.variant]();
+      document.getElementById("switchLabel").textContent = `${state.variant} (${VARIANTS[state.variant].name})`;
+      document.getElementById("explain").innerHTML = `<b>${state.variant} · ${VARIANTS[state.variant].name}</b>${VARIANTS[state.variant].why}`;
+      document.getElementById("bTheme").textContent = state.theme;
+      document.getElementById("bMode").textContent = state.remainingMode ? "Remaining" : "Used";
+      const { hover, ...rest } = state;
+      document.getElementById("stateDump").textContent = JSON.stringify({ ...rest, order: providers.map((p) => `${p.id}${p.pinned ? "*" : ""}${p.enabled ? "" : "(off)"}`) }, null, 1);
+      const ctx = document.getElementById("ctx");
+      ctx.classList.toggle("open", !!state.ctx);
+      if (state.ctx) { ctx.style.left = `${state.ctx.x}px`; ctx.style.top = `${state.ctx.y}px`; }
+    }
+    function moveProvider(i, d) {
+      const j = i + d; if (j < 0 || j >= providers.length) return;
+      const [row] = providers.splice(i, 1); providers.splice(j, 0, row);
+    }
+    document.addEventListener("click", (e) => {
+      const t = e.target.closest("[data-ctrl],[data-open],[data-sel],[data-act],[data-mode],[data-en],[data-pin],[data-mv],[data-url],[data-b],[data-primary],[data-prov]");
+      const inCtx = e.target.closest("#ctx");
+      if (!inCtx) state.ctx = null;
+      if (!t) { if (!e.target.closest(".pop,.win,.badge,.switcher,.panel")) state.popover = false; render(); return; }
+      const d = t.dataset;
+      if (d.b) {
+        if (d.b === "theme") state.theme = state.theme === "dark" ? "light" : "dark";
+        if (d.b === "mode") state.remainingMode = !state.remainingMode;
+        if (d.b === "refresh") { state.refreshing = true; setTimeout(() => { state.refreshing = false; render(); }, 1800); }
+        if (d.b === "pop") state.popover = !state.popover;
+        if (d.b === "claude") { state.claudeOk = !state.claudeOk; Object.assign(providers.find((p) => p.id === "claude"), state.claudeOk ? CLAUDE_OK : { remaining: null, plan: undefined, error: "HTTP 429", windows: [] }); }
+        if (d.b === "cursor") { state.cursorDrained = !state.cursorDrained; const c = providers.find((p) => p.id === "cursor"); if (state.cursorDrained) { c.remaining = 0.03; c.windows[0].remaining = 0.03; } else { c.remaining = CURSOR_ORIG.remaining; c.windows[0].remaining = CURSOR_ORIG.windows[0].remaining; } }
+      }
+      if (d.ctrl) { state.popover = !state.popover; if (state.popover && state.variant === "A") state.page = "overview"; }
+      if (d.open) { state.selected = d.open; if (state.variant === "A") state.page = "detail"; state.popover = !(state.popover && state.variant === "C" && state.selected === d.open && false); state.popover = true; }
+      if (d.sel) {
+        if (state.variant === "A") { state.selected = d.sel; state.page = "detail"; }
+        else if (state.variant === "C" && !state.edit) state.selected = state.selected === d.sel ? null : d.sel;
+      }
+      if (d.act) {
+        if (d.act === "refresh") { state.refreshing = true; setTimeout(() => { state.refreshing = false; render(); }, 1800); }
+        if (d.act === "back") state.page = "overview";
+        if (d.act === "back-settings") { state.page = "settings"; state.login = null; }
+        if (d.act === "login-browser" || d.act === "login-open") {
+          state.login = { id: state.selected, phase: "waiting" };
+          if (d.act === "login-open") { state.login.phase = "paste"; }
+          else setTimeout(() => {
+            if (!state.login || state.login.phase !== "waiting") return;
+            const p = providers.find((x) => x.id === state.login.id);
+            p.credentialSource = "cli"; p.error = undefined;
+            if (p.id === "claude") { Object.assign(p, CLAUDE_OK); state.claudeOk = true; }
+            state.login = null; render();
+          }, 2500);
+        }
+        if (d.act === "login-paste") state.login = { id: state.selected, phase: "paste" };
+        if (d.act === "login-cancel") state.login = null;
+        if (d.act === "login-save") { const p = providers.find((x) => x.id === state.selected); p.credentialSource = "pub"; p.error = undefined; if (p.id === "claude") { Object.assign(p, CLAUDE_OK); state.claudeOk = true; } state.login = null; }
+        if (d.act === "login-out") { const p = providers.find((x) => x.id === state.selected); p.credentialSource = undefined; p.error = "signed out"; p.remaining = null; p.windows = []; p.plan = undefined; }
+        if (d.act === "settings") { state.popover = true; state.page = "settings"; }
+        if (d.act === "edit") state.edit = !state.edit;
+        if (d.act === "prefs") state.prefs = true;
+        if (d.act === "prefs-close") state.prefs = false;
+        if (d.act === "autostart") state.autostart = !state.autostart;
+        if (d.act === "exit") { state.exited = true; state.popover = false; }
+      }
+      if (d.mode) state.remainingMode = d.mode === "1";
+      if (d.en) { const p = providers.find((x) => x.id === d.en); p.enabled = !p.enabled; if (!p.enabled) p.pinned = false; }
+      if (d.pin) { const p = providers.find((x) => x.id === d.pin); if (p.enabled) p.pinned = !p.pinned; }
+      if (d.primary) { const [pid, wid] = d.primary.split(":"); const p = providers.find((x) => x.id === pid); for (const w of p.windows) w.primary = w.id === wid; const pw = p.windows.find((w) => w.primary); if (pw) p.remaining = pw.remaining; }
+      if (d.prov && !e.target.closest("[data-pin],.grip")) { state.selected = d.prov; state.page = "provider"; state.login = null; }
+      if (d.mv) { const [i, dd] = d.mv.split(":").map(Number); moveProvider(i, dd); }
+      if (d.url) { e.preventDefault(); alert(`xdg-open ${d.url}`); }
+      render();
+    });
+    document.addEventListener("contextmenu", (e) => {
+      const c = e.target.closest("[data-ctrl]");
+      if (!c) return;
+      e.preventDefault();
+      state.popover = false;
+      state.ctx = { x: Math.min(e.clientX, innerWidth - 200), y: 36 };
+      render();
+    });
+    document.addEventListener("mouseover", (e) => {
+      if (state.variant !== "B") return;
+      const m = e.target.closest("[data-hover]");
+      const next = m ? m.dataset.hover : null;
+      if (next !== state.hover) { state.hover = next; render(); }
+    });
+
+    document.addEventListener("dragstart", (e) => {
+      const r = e.target.closest("[data-prov]"); if (!r) return;
+      state.drag = Number(r.dataset.idx); r.classList.add("dragging"); e.dataTransfer.effectAllowed = "move";
+    });
+    document.addEventListener("dragover", (e) => {
+      const r = e.target.closest("[data-prov]"); if (!r || state.drag === null) return;
+      e.preventDefault(); document.querySelectorAll(".a-prow.over").forEach((x) => x.classList.remove("over")); r.classList.add("over");
+    });
+    document.addEventListener("drop", (e) => {
+      const r = e.target.closest("[data-prov]"); if (!r || state.drag === null) return;
+      e.preventDefault(); const to = Number(r.dataset.idx); const [row] = providers.splice(state.drag, 1); providers.splice(to, 0, row); state.drag = null; render();
+    });
+    document.addEventListener("dragend", () => { state.drag = null; render(); });
+
+    /* switcher */
+    const keys = Object.keys(VARIANTS);
+    function setVariant(v) {
+      state.variant = v; state.page = "overview"; state.edit = false; state.prefs = false;
+      const url = new URL(location.href); url.searchParams.set("variant", v); history.replaceState(null, "", url);
+      render();
+    }
+    document.getElementById("prev").onclick = () => setVariant(keys[(keys.indexOf(state.variant) + keys.length - 1) % keys.length]);
+    document.getElementById("next").onclick = () => setVariant(keys[(keys.indexOf(state.variant) + 1) % keys.length]);
+    document.addEventListener("keydown", (e) => {
+      if (e.target.matches("input,textarea,[contenteditable]")) return;
+      if (e.key === "ArrowLeft") document.getElementById("prev").click();
+      if (e.key === "ArrowRight") document.getElementById("next").click();
+      if (e.key === "Escape") { state.ctx = null; state.prefs = false; render(); }
+    });
+    const initial = new URL(location.href).searchParams.get("variant");
+    setVariant(keys.includes(initial) ? initial : "A");
+    /* ?s=page:detail,theme:light,prefs:1,edit:1,selected:cursor,mode:used — deep-link a state for screenshots */
+    const deep = new URL(location.href).searchParams.get("s");
+    if (deep) {
+      for (const kv of deep.split(",")) {
+        const [k, v] = kv.split(":");
+        if (k === "page") state.page = v;
+        if (k === "theme") state.theme = v;
+        if (k === "prefs") state.prefs = v === "1";
+        if (k === "edit") state.edit = v === "1";
+        if (k === "selected") state.selected = v;
+        if (k === "login") state.login = { id: state.selected, phase: v };
+        if (k === "signedout") { const p = providers.find((x) => x.id === v); p.credentialSource = undefined; p.error = "signed out"; p.remaining = null; p.windows = []; p.plan = undefined; }
+        if (k === "mode") state.remainingMode = v !== "used";
+        if (k === "pop") state.popover = v === "1";
+        if (k === "ctx") state.ctx = { x: innerWidth - 300, y: 36 };
+      }
+      render();
+    }
+  </script>
+</body>
+</html>
