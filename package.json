@@ -1,6 +1,6 @@
 {
   "name": "plan-usage-bar",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "PUB (Plan Usage Bar) — GNOME Strip of Plan Quota meters",
   "license": "GPL-2.0-or-later",
