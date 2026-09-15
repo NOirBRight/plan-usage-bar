@@ -28,7 +28,7 @@ mkdir -p \
   "$NEST/cache" \
   "$NEST/data/gnome-shell/extensions" \
   "$NEST/state"
-ln -sfn "$EXT" "$NEST/data/gnome-shell/extensions/pub@noirbright"
+ln -sfn "$EXT" "$NEST/data/gnome-shell/extensions/plan-usage-bar@noirbright.github.io"
 if [[ -f "$HOME/.config/pub/settings.json" ]]; then
   cp "$HOME/.config/pub/settings.json" "$NEST/config/pub/settings.json"
 fi
@@ -74,7 +74,7 @@ exec dbus-run-session -- bash -c '
   gsettings set org.gnome.desktop.media-handling automount false || true
   gsettings set org.gnome.desktop.media-handling automount-open false || true
   gsettings set org.gnome.shell disable-user-extensions false
-  gnome-extensions enable pub@noirbright
-  gnome-extensions info pub@noirbright > "'"$NEST"'/extension-info.txt" 2>&1 || true
+  gnome-extensions enable plan-usage-bar@noirbright.github.io
+  gnome-extensions info plan-usage-bar@noirbright.github.io > "'"$NEST"'/extension-info.txt" 2>&1 || true
   wait "$(cat "'"$NEST"'/gnome-shell.pid")"
 '

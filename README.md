@@ -45,13 +45,13 @@ cd plan-usage-bar
 pnpm install
 pnpm build
 
-ln -sfn "$PWD/extension" ~/.local/share/gnome-shell/extensions/pub@noirbright
+ln -sfn "$PWD/extension" ~/.local/share/gnome-shell/extensions/plan-usage-bar@noirbright.github.io
 ```
 
 GNOME Shell 只在启动时扫描新扩展，所以第一次需要**注销再登录**，然后启用：
 
 ```bash
-gnome-extensions enable pub@noirbright
+gnome-extensions enable plan-usage-bar@noirbright.github.io
 ```
 
 可选：把 PUB 放进应用列表，点开即启动，右键可以重新加载或退出。
@@ -94,7 +94,7 @@ pnpm snapshot    # 手动跑一次引擎，写出快照
 改了 `pub-ui.js` 或样式后不用注销：
 
 ```bash
-gnome-extensions disable pub@noirbright; gnome-extensions enable pub@noirbright
+gnome-extensions disable plan-usage-bar@noirbright.github.io; gnome-extensions enable plan-usage-bar@noirbright.github.io
 ```
 
 想在不影响当前桌面的情况下测试，可以开一个嵌套 GNOME Shell 窗口：
