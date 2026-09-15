@@ -41,7 +41,7 @@ bash scripts/nested-shell.sh
 嵌套会话里 `PUB_PROBE=1`，可以不碰鼠标驱动扩展：往 `/tmp/pub-nested/state/pub-probe.cmd` 写一条命令，扩展每 200ms 读一次，状态写回同目录的 `pub-probe.json`。
 
 ```bash
-echo 'page:settings' > /tmp/pub-nested/state/pub-probe.cmd   # open | close | context | click | select:<id> | page:<overview|detail|settings|provider> | paste:<id>
+echo 'page:settings' > /tmp/pub-nested/state/pub-probe.cmd   # open | close | context | click | select:<id> | page:<overview|detail|settings|provider> | paste:<id> | watch:<id> | unwatch:<id>
 echo 'shot:settings' > /tmp/pub-nested/state/pub-probe.cmd   # 截图到 state/settings.png
 echo 'tap:900,250'   > /tmp/pub-nested/state/pub-probe.cmd   # move:x,y | down | up | tap:x,y，舞台坐标
 ```

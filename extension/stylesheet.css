@@ -233,6 +233,10 @@
   border-radius: 99px;
 }
 
+.pub-prow .pub-switch-btn {
+  padding: 4px 2px;
+}
+
 .pub-radio-row {
   padding: 7px 16px;
 }
