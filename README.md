@@ -29,8 +29,8 @@ GNOME 顶栏上的 AI 编程套餐额度条。Claude、Codex、Cursor、Grok、O
 | Cursor | cursor.com 用量汇总 | `cursor-agent login`，或读取 `~/.config/cursor/auth.json`，或粘贴 Cookie / JWT |
 | Grok | Grok CLI 计费接口 | `grok login --oauth`，或读取 `~/.grok/auth.json` |
 | Ollama Cloud | ollama.com 用量接口 | 粘贴 API key，或环境变量 `OLLAMA_API_KEY` |
-| OpenCode Go | OpenCode Go `/zen/go/v1/usage` | 粘贴 API key，或读取 `~/.local/share/opencode/auth.json`，或环境变量 `OPENCODE_API_KEY` |
-| Command Code | Command Code `/alpha` 账户额度 | 粘贴 API key，或读取 `~/.commandcode/auth.json`，或环境变量 `COMMAND_CODE_API_KEY` |
+| OpenCode Go | OpenCode Go `/zen/go/v1/usage` | 粘贴 API key，或读取 `~/.local/share/opencode/auth.json`，或环境变量 `OPENCODE_API_KEY` / `OPENCODE_GO_API_KEY` |
+| Command Code | Command Code `/alpha` 账户额度 | 粘贴 API key，或读取 `~/.commandcode/auth.json`，或环境变量 `COMMAND_CODE_API_KEY` / `COMMANDCODE_API_KEY` |
 
 这些接口大多不是公开文档化的 API，服务商改动后可能失效。
 

@@ -68,7 +68,11 @@ function parseOpenCodeGoUsage(
     if (parsed !== undefined) windows.push(parsed)
   }
   if (windows.length === 0) throw new Error('OpenCode Go usage reply listed no quota windows')
-  if (!windows.some(window => window.primary)) windows[0]!.primary = true
+  if (!windows.some(window => window.primary)) {
+    const weekly = windows.find(window => window.id === 'weekly')
+    if (weekly !== undefined) weekly.primary = true
+    else windows[0]!.primary = true
+  }
   const primary = windows.find(window => window.primary) ?? windows[0]!
   return { remaining: primary.remaining, windows }
 }

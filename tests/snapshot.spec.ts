@@ -149,6 +149,24 @@ describe('readSnapshot', () => {
     })])
   })
 
+  it('marks Command Code signed out when no credential is present', async () => {
+    const snapshot = await readSnapshot({
+      settings: {
+        remainingMode: true,
+        providers: [{ id: 'commandcode', enabled: true, pinned: false }],
+      },
+      store: memoryStore({}),
+      fetch: async () => new Response('no', { status: 500 }),
+      now: () => Date.parse('2026-09-14T00:10:38.000Z'),
+    })
+    expect(snapshot.providers).toEqual([expect.objectContaining({
+      id: 'commandcode',
+      remaining: null,
+      error: 'signed out',
+      errorKind: 'signed-out',
+    })])
+  })
+
   it('keeps Enabled provider order from settings', async () => {
     const store = memoryStore({
       '/home/user/.claude/.credentials.json': JSON.stringify({
@@ -299,6 +317,76 @@ describe('readSnapshot', () => {
     expect(chosen?.primary).toBe(true)
     expect(codex.windows.filter(window => window.primary)).toHaveLength(1)
     expect(codex.remaining).toBe(chosen?.remaining)
+  })
+
+  it('uses the chosen OpenCode Go Primary Window for remaining', async () => {
+    const store = memoryStore({
+      '/home/user/.config/pub/credentials.json': JSON.stringify({
+        'opencode-go': { token: 'go-key' },
+      }),
+    })
+    const snapshot = await readSnapshot({
+      settings: {
+        remainingMode: true,
+        providers: [{ id: 'opencode-go', enabled: true, pinned: false, primary: 'weekly' }],
+      },
+      store,
+      fetch: async () => jsonResponse('opencode-go.json'),
+      now: () => Date.parse('2026-09-14T00:10:38.000Z'),
+    })
+    const go = snapshot.providers[0]!
+    const chosen = go.windows.find(window => window.id === 'weekly')
+    expect(chosen?.primary).toBe(true)
+    expect(go.windows.filter(window => window.primary)).toHaveLength(1)
+    expect(go.remaining).toBe(0.7)
+  })
+
+  it('keeps last-good remaining when Command Code credits answers 401', async () => {
+    const store = memoryStore({
+      '/home/user/.config/pub/credentials.json': JSON.stringify({
+        commandcode: { token: 'cmd-key' },
+      }),
+    })
+    const previous = {
+      fetchedAt: '2026-09-14T00:00:00.000Z',
+      remainingMode: true,
+      providers: [{
+        id: 'commandcode',
+        name: 'Command Code',
+        plan: 'GOAT',
+        pinned: false,
+        remaining: 4.73 / 70,
+        accent: '#111111',
+        fetchedAt: '2026-09-14T00:00:00.000Z',
+        usageUrl: 'https://commandcode.ai/usage',
+        statusUrl: 'https://commandcode.ai/usage',
+        credentialSource: 'pub' as const,
+        windows: [{
+          id: 'monthly',
+          label: 'Monthly',
+          remaining: 4.73 / 70,
+          resetLabel: '',
+          primary: true,
+        }],
+      }],
+    }
+    const snapshot = await readSnapshot({
+      settings: {
+        remainingMode: true,
+        providers: [{ id: 'commandcode', enabled: true, pinned: false }],
+      },
+      store,
+      fetch: async () => new Response('no', { status: 401 }),
+      now: () => Date.parse('2026-09-14T00:10:38.000Z'),
+      previous,
+    })
+    expect(snapshot.providers[0]).toEqual(expect.objectContaining({
+      remaining: 4.73 / 70,
+      error: 'HTTP 401',
+      errorKind: 'unauthorized',
+      fetchedAt: '2026-09-14T00:00:00.000Z',
+      credentialSource: 'pub',
+    }))
   })
 })
 

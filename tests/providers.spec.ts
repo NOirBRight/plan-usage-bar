@@ -167,6 +167,20 @@ describe('OpenCode Go pull', () => {
     expect(parsed.windows.map(window => window.id)).toEqual(['session', 'weekly', 'monthly'])
     expect(parsed.remaining).toBe(0.9)
   })
+
+  it('defaults Primary to Weekly when Monthly is absent', async () => {
+    const parsed = await openCodeGo.pull(
+      { token: 'go-key', source: 'pub' },
+      async () => new Response(JSON.stringify({
+        rolling: { percent: 10 },
+        weekly: { percent: 40 },
+      }), { status: 200, headers: { 'content-type': 'application/json' } }),
+      now,
+    )
+    expect(parsed.windows.map(window => window.id)).toEqual(['session', 'weekly'])
+    expect(parsed.windows.find(window => window.primary)?.id).toBe('weekly')
+    expect(parsed.remaining).toBe(0.6)
+  })
 })
 
 describe('Command Code pull', () => {
