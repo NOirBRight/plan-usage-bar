@@ -65,6 +65,8 @@ describe('readSnapshot', () => {
       '/home/user/.config/pub/credentials.json': JSON.stringify({
         cursor: { token: 'cursor-token', userId: 'user_abc' },
         'ollama-cloud': { token: 'ollama-key' },
+        'opencode-go': { token: 'go-key' },
+        commandcode: { token: 'cmd-key' },
       }),
       '/home/user/.grok/auth.json': JSON.stringify({
         'https://auth.x.ai::id': { key: 'grok-token' },
@@ -80,6 +82,11 @@ describe('readSnapshot', () => {
         return new Response(JSON.stringify({ subscription_tier_display: 'SuperGrok Heavy' }), { status: 200 })
       }
       if (href.includes('ollama.com')) return jsonResponse('ollama-monthly.json')
+      if (href.includes('opencode.ai/zen/go/v1/usage')) return jsonResponse('opencode-go.json')
+      if (href.includes('api.commandcode.ai/alpha/whoami')) return jsonResponse('commandcode-whoami.json')
+      if (href.includes('api.commandcode.ai/alpha/billing/credits')) return jsonResponse('commandcode-credits.json')
+      if (href.includes('api.commandcode.ai/alpha/billing/subscriptions')) return jsonResponse('commandcode-subscription.json')
+      if (href.includes('api.commandcode.ai/alpha/usage/summary')) return jsonResponse('commandcode-summary.json')
       return new Response('no', { status: 404 })
     }
     const snapshot = await readSnapshot({
@@ -89,15 +96,19 @@ describe('readSnapshot', () => {
       now: () => Date.parse('2026-09-14T00:10:38.000Z'),
     })
     expect(snapshot.providers.map(provider => provider.id)).toEqual([
-      'claude', 'codex', 'cursor', 'grok', 'ollama-cloud',
+      'claude', 'codex', 'cursor', 'grok', 'ollama-cloud', 'opencode-go', 'commandcode',
     ])
     expect(snapshot.providers.find(provider => provider.id === 'claude')?.remaining).toBe(0.98)
     expect(snapshot.providers.find(provider => provider.id === 'grok')?.remaining).toBe(0.99)
     expect(snapshot.providers.find(provider => provider.id === 'grok')?.plan).toBe('SuperGrok Heavy')
     expect(snapshot.providers.find(provider => provider.id === 'ollama-cloud')?.pinned).toBe(false)
+    expect(snapshot.providers.find(provider => provider.id === 'opencode-go')?.pinned).toBe(false)
+    expect(snapshot.providers.find(provider => provider.id === 'commandcode')?.pinned).toBe(false)
+    expect(snapshot.providers.find(provider => provider.id === 'opencode-go')?.remaining).toBe(0.99)
+    expect(snapshot.providers.find(provider => provider.id === 'commandcode')?.remaining).toBeCloseTo(4.73 / 70, 5)
     expect(snapshot.providers.find(provider => provider.id === 'cursor')?.credentialSource).toBe('pub')
     expect(snapshot.providers.find(provider => provider.id === 'claude')?.credentialSource).toBe('cli')
-    expect(JSON.stringify(snapshot)).not.toMatch(/claude-token|codex-token|cursor-token|grok-token|ollama-key/u)
+    expect(JSON.stringify(snapshot)).not.toMatch(/claude-token|codex-token|cursor-token|grok-token|ollama-key|go-key|cmd-key/u)
   })
 
   it('marks a provider signed out when no credential is present', async () => {

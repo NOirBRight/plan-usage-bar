@@ -62,6 +62,8 @@ export const DEFAULT_SETTINGS: PubSettings = {
     { id: 'cursor', enabled: true, pinned: true },
     { id: 'grok', enabled: true, pinned: true },
     { id: 'ollama-cloud', enabled: true, pinned: false },
+    { id: 'opencode-go', enabled: true, pinned: false },
+    { id: 'commandcode', enabled: true, pinned: false },
   ],
 }
 

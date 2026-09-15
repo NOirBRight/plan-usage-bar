@@ -186,10 +186,40 @@ async function grokFromCli(store: CredentialStore): Promise<ProviderAccess | und
   return undefined
 }
 
+function xdgDataHome(store: CredentialStore): string {
+  const xdg = store.env['XDG_DATA_HOME']
+  if (typeof xdg === 'string' && xdg.length > 0)
+    return xdg
+  return join(store.home, '.local', 'share')
+}
+
+function envToken(store: CredentialStore, names: readonly string[]): ProviderAccess | undefined {
+  for (const name of names) {
+    const value = store.env[name]
+    if (typeof value === 'string' && value.length > 0)
+      return { token: value, source: 'env' }
+  }
+}
+
+async function openCodeGoFromCli(store: CredentialStore): Promise<ProviderAccess | undefined> {
+  const value = await readJsonFile(store, join(xdgDataHome(store), 'opencode', 'auth.json'))
+  if (!isRecord(value) || !isRecord(value['opencode-go'])) return undefined
+  const row = value['opencode-go']
+  const token = row['key'] ?? row['apiKey']
+  if (typeof token !== 'string' || token.length === 0) return undefined
+  return { token, source: 'cli' }
+}
+
+async function commandCodeFromCli(store: CredentialStore): Promise<ProviderAccess | undefined> {
+  const value = await readJsonFile(store, join(store.home, '.commandcode', 'auth.json'))
+  if (!isRecord(value)) return undefined
+  const token = value['apiKey']
+  if (typeof token !== 'string' || token.length === 0) return undefined
+  return { token, source: 'cli' }
+}
+
 function ollamaFromEnv(store: CredentialStore): ProviderAccess | undefined {
-  const envKey = store.env['OLLAMA_API_KEY']
-  if (typeof envKey === 'string' && envKey.length > 0) return { token: envKey, source: 'env' }
-  return undefined
+  return envToken(store, ['OLLAMA_API_KEY'])
 }
 
 function pubClaude(pub: PubCredential): ProviderAccess {
@@ -235,6 +265,14 @@ export async function resolveAccess(
   if (id === 'ollama-cloud') {
     if (pub !== undefined) return pubToken(pub)
     return ollamaFromEnv(store)
+  }
+  if (id === 'opencode-go') {
+    if (pub !== undefined) return pubToken(pub)
+    return await openCodeGoFromCli(store) ?? envToken(store, ['OPENCODE_API_KEY', 'OPENCODE_GO_API_KEY'])
+  }
+  if (id === 'commandcode') {
+    if (pub !== undefined) return pubToken(pub)
+    return await commandCodeFromCli(store) ?? envToken(store, ['COMMAND_CODE_API_KEY', 'COMMANDCODE_API_KEY'])
   }
   return undefined
 }

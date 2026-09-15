@@ -4,9 +4,11 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { claude } from '../src/providers/claude.ts'
 import { codex } from '../src/providers/codex.ts'
+import { commandCode } from '../src/providers/commandcode.ts'
 import { cursor } from '../src/providers/cursor.ts'
 import { grok } from '../src/providers/grok.ts'
 import { ollamaCloud } from '../src/providers/ollama.ts'
+import { openCodeGo } from '../src/providers/opencode-go.ts'
 import { resetLabel } from '../src/remaining.ts'
 import type { FetchLike } from '../src/http.ts'
 
@@ -132,6 +134,69 @@ describe('Ollama Cloud pull', () => {
     expect(parsed.windows[0]?.remaining).toBeCloseTo(0.812, 3)
     expect(parsed.windows[1]?.remaining).toBeCloseTo(0.46, 3)
     expect(parsed.remaining).toBeCloseTo(0.46, 3)
+  })
+})
+
+describe('OpenCode Go pull', () => {
+  it('treats usage percent as used and defaults Primary to Monthly', async () => {
+    const fetchImpl: FetchLike = async (url, init) => {
+      expect(String(url)).toBe('https://opencode.ai/zen/go/v1/usage')
+      expect(headersOf(init)['authorization']).toBe('Bearer go-key')
+      expect(headersOf(init)['x-opencode-session']).toBe('ses_pub-usage')
+      expect(headersOf(init)['user-agent']).toBe('pub-engine')
+      return jsonResponse('opencode-go.json')
+    }
+    const parsed = await openCodeGo.pull({ token: 'go-key', source: 'pub' }, fetchImpl, now)
+    expect(parsed.windows.map(window => window.id)).toEqual(['session', 'weekly', 'monthly'])
+    expect(parsed.windows.map(window => window.label)).toEqual(['5-hour', 'Weekly', 'Monthly'])
+    expect(parsed.windows.map(window => window.remaining)).toEqual([0.96, 0.7, 0.99])
+    expect(parsed.windows.find(window => window.primary)?.id).toBe('monthly')
+    expect(parsed.remaining).toBe(0.99)
+  })
+})
+
+describe('Command Code pull', () => {
+  it('uses monthly remaining vs GOAT pool as Primary, not the Weekly window', async () => {
+    const seen: string[] = []
+    const fetchImpl: FetchLike = async (url, init) => {
+      seen.push(String(url))
+      expect(headersOf(init)['authorization']).toBe('Bearer cmd-key')
+      const href = String(url)
+      if (href.endsWith('/alpha/whoami')) return jsonResponse('commandcode-whoami.json')
+      if (href.includes('/alpha/billing/credits')) return jsonResponse('commandcode-credits.json')
+      if (href.includes('/alpha/billing/subscriptions')) return jsonResponse('commandcode-subscription.json')
+      if (href.includes('/alpha/usage/summary')) return jsonResponse('commandcode-summary.json')
+      throw new Error('unexpected URL ' + href)
+    }
+    const parsed = await commandCode.pull({ token: 'cmd-key', source: 'pub' }, fetchImpl, now)
+    expect(seen[0]).toContain('/alpha/whoami')
+    expect(seen.some(url => url.includes('/alpha/billing/credits'))).toBe(true)
+    expect(parsed.plan).toBe('GOAT')
+    const monthly = parsed.windows.find(window => window.id === 'monthly')
+    const weekly = parsed.windows.find(window => window.id === 'weekly')
+    const session = parsed.windows.find(window => window.id === 'session')
+    expect(monthly?.primary).toBe(true)
+    expect(parsed.remaining).toBeCloseTo(4.73 / 70, 5)
+    expect(weekly?.remaining).toBeCloseTo(1 - 3.22 / 35, 5)
+    expect(parsed.remaining).not.toBeCloseTo(weekly?.remaining ?? 0, 2)
+    expect(session?.remaining).toBe(1)
+    expect(session?.resetsAt).toBeUndefined()
+    expect(weekly?.resetsAt).toBe('2026-09-17T03:38:53.975Z')
+    expect(parsed.cost?.month).toBe('$4.73 remaining')
+    expect(parsed.extraNote).toContain('2.50')
+  })
+
+  it('keeps monthly remaining when summary fails and the plan table supplies the pool', async () => {
+    const fetchImpl: FetchLike = async (url) => {
+      const href = String(url)
+      if (href.endsWith('/alpha/whoami')) return jsonResponse('commandcode-whoami.json')
+      if (href.includes('/alpha/billing/credits')) return jsonResponse('commandcode-credits.json')
+      if (href.includes('/alpha/billing/subscriptions')) return jsonResponse('commandcode-subscription.json')
+      return new Response('', { status: 503 })
+    }
+    const parsed = await commandCode.pull({ token: 'cmd-key', source: 'cli' }, fetchImpl, now)
+    expect(parsed.remaining).toBeCloseTo(4.73 / 70, 5)
+    expect(parsed.plan).toBe('GOAT')
   })
 })
 

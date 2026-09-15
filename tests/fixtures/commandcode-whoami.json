@@ -1,0 +1,5 @@
+{
+  "success": true,
+  "user": { "id": "user-1", "name": "A User", "userName": "a-user" },
+  "org": null
+}

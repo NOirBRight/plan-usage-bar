@@ -1,8 +1,8 @@
 # PUB · Plan Usage Bar
 
-GNOME 顶栏上的 AI 编程套餐额度条。Claude、Codex、Cursor、Grok、Ollama Cloud 还剩多少，一眼看完。
+GNOME 顶栏上的 AI 编程套餐额度条。Claude、Codex、Cursor、Grok、Ollama Cloud、OpenCode Go、Command Code 还剩多少，一眼看完。
 
-*A GNOME Shell extension that shows how much of your AI coding plan quota is left — Claude, Codex, Cursor, Grok and Ollama Cloud — right in the top bar.*
+*A GNOME Shell extension that shows how much of your AI coding plan quota is left — Claude, Codex, Cursor, Grok, Ollama Cloud, OpenCode Go and Command Code — right in the top bar.*
 
 <p>
   <img src="docs/images/overview.png" alt="Overview" width="300">
@@ -16,7 +16,7 @@ GNOME 顶栏上的 AI 编程套餐额度条。Claude、Codex、Cursor、Grok、O
 - **概览与详情**：点开看全部 Provider；点某一家看它所有的额度周期（5 小时、每周、每月等）和重置时间。
 - **剩余 / 已用**：全局切换百分比读法。
 - **设置**：拖动排序、固定到顶栏、选择顶栏显示哪个额度周期（Primary Window）。
-- **登录**：Claude、Codex、Cursor、Grok 调用官方 CLI 在浏览器里授权；Ollama Cloud 粘贴 API key。
+- **登录**：Claude、Codex、Cursor、Grok 调用官方 CLI 在浏览器里授权；Ollama Cloud、OpenCode Go、Command Code 打开官网后粘贴 API key（本机有官方 CLI 时也可登录）。
 - **跟随系统**：深浅主题和强调色都跟随 GNOME，Ubuntu 的 Yaru 主题也适配。
 - **不注销重载**：改完界面代码，右键「重新加载」立即生效。
 
@@ -29,6 +29,8 @@ GNOME 顶栏上的 AI 编程套餐额度条。Claude、Codex、Cursor、Grok、O
 | Cursor | cursor.com 用量汇总 | `cursor-agent login`，或读取 `~/.config/cursor/auth.json`，或粘贴 Cookie / JWT |
 | Grok | Grok CLI 计费接口 | `grok login --oauth`，或读取 `~/.grok/auth.json` |
 | Ollama Cloud | ollama.com 用量接口 | 粘贴 API key，或环境变量 `OLLAMA_API_KEY` |
+| OpenCode Go | OpenCode Go `/zen/go/v1/usage` | 粘贴 API key，或读取 `~/.local/share/opencode/auth.json`，或环境变量 `OPENCODE_API_KEY` |
+| Command Code | Command Code `/alpha` 账户额度 | 粘贴 API key，或读取 `~/.commandcode/auth.json`，或环境变量 `COMMAND_CODE_API_KEY` |
 
 这些接口大多不是公开文档化的 API，服务商改动后可能失效。
 
