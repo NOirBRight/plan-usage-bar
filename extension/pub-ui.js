@@ -14,6 +14,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
+const REFRESH_SECONDS = 300;
 const LOGIN_WAIT_SECONDS = 300;
 const PINNED_LIMIT = 6;
 const PROVIDER_NAMES = {
@@ -272,6 +273,7 @@ const PubIndicator = GObject.registerClass({
         this._refreshing = false;
         this._pendingReason = null;
         this._engineProc = null;
+        this._timer = 0;
         this._stripIdle = 0;
         this._stripDirty = false;
         this._menuLater = 0;
@@ -344,6 +346,7 @@ const PubIndicator = GObject.registerClass({
         this._readSnapshotFile();
         this._rebuildStrip();
         this._rebuildMenu();
+        this._armTimer();
         this._startProbe();
     }
 
@@ -870,13 +873,7 @@ const PubIndicator = GObject.registerClass({
         return this._label(text, 'pub-group pub-dim', { x_expand: true });
     }
 
-    _switchRow(title, subtitle, state, sensitive, onToggle) {
-        const row = new St.BoxLayout({ style_class: 'pub-srow', x_expand: true });
-        const text = new St.BoxLayout({ vertical: true, x_expand: true, y_align: Clutter.ActorAlign.CENTER });
-        text.add_child(this._label(title, 'pub-srow-title'));
-        if (subtitle)
-            text.add_child(this._label(subtitle, 'pub-dim pub-small'));
-        row.add_child(text);
+    _switchButton(state, sensitive, name, onToggle) {
         const toggle = new PopupMenu.Switch(state);
         toggle.reactive = false;
         const button = new St.Button({
@@ -885,7 +882,7 @@ const PubIndicator = GObject.registerClass({
             can_focus: sensitive,
             reactive: sensitive,
             y_align: Clutter.ActorAlign.CENTER,
-            accessible_name: title,
+            accessible_name: name,
         });
         if (!sensitive)
             button.opacity = 110;
@@ -893,7 +890,17 @@ const PubIndicator = GObject.registerClass({
             toggle.toggle();
             onToggle(toggle.state);
         });
-        row.add_child(button);
+        return button;
+    }
+
+    _switchRow(title, subtitle, state, sensitive, onToggle) {
+        const row = new St.BoxLayout({ style_class: 'pub-srow', x_expand: true });
+        const text = new St.BoxLayout({ vertical: true, x_expand: true, y_align: Clutter.ActorAlign.CENTER });
+        text.add_child(this._label(title, 'pub-srow-title'));
+        if (subtitle)
+            text.add_child(this._label(subtitle, 'pub-dim pub-small'));
+        row.add_child(text);
+        row.add_child(this._switchButton(state, sensitive, title, onToggle));
         return row;
     }
 
@@ -1084,7 +1091,7 @@ const PubIndicator = GObject.registerClass({
         page.add_child(modeRow);
         page.add_child(this._sep());
 
-        page.add_child(this._group('PROVIDER · 拖动右侧把手调整顺序'));
+        page.add_child(this._group('PROVIDER · 开关监视，拖动右侧把手调整顺序'));
         const list = new St.BoxLayout({ vertical: true, x_expand: true });
         const rows = [];
         this._settings.providers.forEach((setting, index) => {
@@ -1124,6 +1131,8 @@ const PubIndicator = GObject.registerClass({
             this._go('provider');
         });
         row.add_child(main);
+        row.add_child(this._switchButton(setting.enabled, true, '监视此 Provider',
+            state => this._setEnabled(setting.id, state)));
 
         const pin = new St.Button({
             style_class: setting.pinned && setting.enabled ? 'pub-ibtn pub-pin pub-pin-on' : 'pub-ibtn pub-pin',
@@ -1918,7 +1927,8 @@ const PubIndicator = GObject.registerClass({
     requestSnapshot(reason) {
         this._readSnapshotFile();
         if (this._refreshing) {
-            this._pendingReason = reason;
+            if (reason !== 'timer')
+                this._pendingReason = reason;
             this._refreshUi();
             return;
         }
@@ -1927,6 +1937,7 @@ const PubIndicator = GObject.registerClass({
             ? '/usr/bin/node'
             : GLib.find_program_in_path('node');
         if (!engine.query_exists(null) || !node) {
+            this._armTimer();
             this._refreshUi();
             return;
         }
@@ -1950,6 +1961,7 @@ const PubIndicator = GObject.registerClass({
                     return;
                 this._readSnapshotFile();
                 this._refreshUi();
+                this._armTimer();
                 if (this._pendingReason) {
                     const next = this._pendingReason;
                     this._pendingReason = null;
@@ -1960,11 +1972,30 @@ const PubIndicator = GObject.registerClass({
             this._refreshing = false;
             this._engineProc = null;
             console.error('PUB: could not spawn engine', error);
+            this._armTimer();
         }
         this._refreshUi();
     }
 
+    _armTimer() {
+        if (!this._alive)
+            return;
+        if (this._timer) {
+            GLib.Source.remove(this._timer);
+            this._timer = 0;
+        }
+        this._timer = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, REFRESH_SECONDS, () => {
+            this._timer = 0;
+            this.requestSnapshot('timer');
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
     _killEngine() {
+        if (this._timer) {
+            GLib.Source.remove(this._timer);
+            this._timer = 0;
+        }
         if (this._engineProc) {
             try {
                 this._engineProc.force_exit();
@@ -2097,7 +2128,11 @@ const PubIndicator = GObject.registerClass({
         else if (verb === 'login') {
             this._selected = arg;
             this._startCliLogin(arg);
-        } else if (verb === 'code' && this._cli)
+        } else if (verb === 'watch')
+            this._setEnabled(arg, true);
+        else if (verb === 'unwatch')
+            this._setEnabled(arg, false);
+        else if (verb === 'code' && this._cli)
             this._submitLoginCode(this._cli, command.slice('code:'.length));
         else if (verb === 'reload')
             GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
