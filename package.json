@@ -1,0 +1,28 @@
+{
+  "name": "plan-usage-bar",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PUB (Plan Usage Bar) — GNOME Strip of Plan Quota meters",
+  "license": "GPL-2.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NOirBRight/plan-usage-bar.git"
+  },
+  "homepage": "https://github.com/NOirBRight/plan-usage-bar",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.json --noEmit && tsdown",
+    "snapshot": "node extension/bin/pub-engine.mjs snapshot"
+  },
+  "devDependencies": {
+    "@types/node": "^26.5.1",
+    "tsdown": "^0.23.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.0"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "activity": { "cost": "1.20" },
+  "limits": {
+    "session": {
+      "usage": 0.188,
+      "reset_after_seconds": 12000
+    },
+    "weekly": {
+      "usage": 0.54,
+      "resets_at": "2026-08-20T11:35:00Z"
+    }
+  }
+}

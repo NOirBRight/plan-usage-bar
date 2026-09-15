@@ -1,0 +1,13 @@
+{
+  "uuid": "pub@noirbright",
+  "name": "PUB",
+  "description": "Plan Usage Bar — Control Icon plus Pinned Meters for coding Plan Quota",
+  "shell-version": [
+    "50"
+  ],
+  "version": 1,
+  "session-modes": [
+    "user"
+  ],
+  "url": "https://github.com/NOirBRight/plan-usage-bar"
+}

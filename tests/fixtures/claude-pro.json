@@ -1,0 +1,27 @@
+{
+  "five_hour": { "utilization": 0.0, "resets_at": null },
+  "seven_day": {
+    "utilization": 2.0,
+    "resets_at": "2026-09-17T20:59:59.994572+00:00"
+  },
+  "seven_day_sonnet": null,
+  "seven_day_opus": null,
+  "extra_usage": null,
+  "spend": null,
+  "limits": [
+    {
+      "kind": "session",
+      "group": "session",
+      "percent": 0,
+      "resets_at": null,
+      "is_active": false
+    },
+    {
+      "kind": "weekly_all",
+      "group": "weekly",
+      "percent": 2,
+      "resets_at": "2026-09-17T20:59:59.994572+00:00",
+      "is_active": true
+    }
+  ]
+}

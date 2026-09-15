@@ -1,0 +1,12 @@
+{
+  "activity": {
+    "cost": "0.00000",
+    "period": { "type": "last_4_weeks" }
+  },
+  "limits": {
+    "monthly": {
+      "usage": 0.001,
+      "models": [{ "name": "gpt-oss:20b", "request_count": 5 }]
+    }
+  }
+}

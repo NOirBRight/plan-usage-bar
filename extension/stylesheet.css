@@ -1,0 +1,373 @@
+/* ===== Strip ===== */
+
+.pub-panel-button {
+  -natural-hpadding: 0px;
+  -minimum-hpadding: 0px;
+  background-color: transparent;
+  box-shadow: none;
+}
+
+.pub-panel-button:hover,
+.pub-panel-button:active,
+.pub-panel-button:checked,
+.pub-panel-button:overview,
+.pub-panel-button:focus {
+  background-color: transparent;
+  box-shadow: none;
+}
+
+.pub-strip {
+  spacing: 2px;
+  padding: 0 2px;
+}
+
+.pub-ctrl,
+.pub-chip {
+  height: 26px;
+  border-radius: 99px;
+  transition-duration: 100ms;
+}
+
+.pub-ctrl {
+  padding: 0 7px;
+}
+
+.pub-chip {
+  padding: 0 8px;
+  spacing: 5px;
+}
+
+.pub-ctrl:hover,
+.pub-chip:hover {
+  background-color: rgba(128, 128, 128, 0.26);
+}
+
+.pub-ctrl.pub-on,
+.pub-chip.pub-on {
+  background-color: rgba(128, 128, 128, 0.42);
+}
+
+.pub-pct {
+  font-size: 12.5px;
+  font-weight: bold;
+  font-feature-settings: "tnum";
+}
+
+.pub-strip .pub-t-warn { color: #f6d32d; }
+.pub-strip .pub-t-crit { color: #ff7b63; }
+
+/* ===== Popover shell ===== */
+
+.popup-menu-content.pub-popover {
+  padding: 6px 0 4px;
+}
+
+.pub-menu-item,
+.pub-menu-item:hover,
+.pub-menu-item:focus,
+.pub-menu-item:active,
+.pub-menu-item:insensitive {
+  padding: 0;
+  margin: 0;
+  spacing: 0;
+  background-color: transparent;
+}
+
+.pub-page {
+  width: 360px;
+}
+
+.pub-hdr {
+  spacing: 6px;
+  padding: 0 10px 6px 8px;
+}
+
+.pub-hdr.pub-hdr-root {
+  padding-left: 16px;
+}
+
+.pub-hdr-title {
+  font-size: 15px;
+  font-weight: bold;
+}
+
+.pub-stamp {
+  font-size: 12px;
+  padding-right: 2px;
+}
+
+.pub-small { font-size: 11px; }
+.pub-name { font-weight: bold; }
+.pub-inline { spacing: 8px; }
+.pub-inline-wide { spacing: 12px; }
+
+.pub-sep { height: 1px; }
+
+.pub-ibtn {
+  border-radius: 99px;
+  padding: 7px;
+}
+
+.pub-pill {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 99px;
+}
+
+.pub-track {
+  border-radius: 99px;
+}
+
+.pub-fill {
+  border-radius: 99px;
+}
+
+/* Overview */
+
+.pub-orow {
+  padding: 9px 16px;
+}
+
+.pub-orow-box { spacing: 12px; }
+.pub-orow-mid { spacing: 5px; }
+.pub-orow-right { spacing: 3px; padding-left: 4px; }
+
+.pub-orow-pct {
+  font-size: 14px;
+  font-weight: bold;
+  font-feature-settings: "tnum";
+}
+
+.pub-foot {
+  spacing: 8px;
+  padding: 8px 16px 4px;
+}
+
+.pub-empty {
+  padding: 16px;
+  spacing: 4px;
+}
+
+.pub-seg {
+  border-radius: 8px;
+  padding: 2px;
+}
+
+.pub-seg-btn {
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+/* Detail */
+
+.pub-detail {
+  padding: 4px 16px 10px;
+  spacing: 6px;
+}
+
+.pub-error-row {
+  padding: 4px 0 8px;
+}
+
+.pub-big-row {
+  spacing: 8px;
+  padding-top: 2px;
+}
+
+.pub-big {
+  font-size: 32px;
+  font-weight: bold;
+  font-feature-settings: "tnum";
+}
+
+.pub-win {
+  spacing: 4px;
+  padding-top: 8px;
+}
+
+.pub-win-title { font-weight: bold; }
+
+.pub-win-value {
+  font-weight: bold;
+  font-feature-settings: "tnum";
+}
+
+.pub-link-row {
+  padding: 9px 16px;
+}
+
+/* Settings */
+
+.pub-srow {
+  spacing: 12px;
+  padding: 8px 16px;
+}
+
+.pub-group {
+  font-size: 11px;
+  font-weight: bold;
+  padding: 10px 16px 4px;
+}
+
+.pub-hint {
+  padding: 6px 16px 8px;
+}
+
+.pub-prow {
+  spacing: 2px;
+  padding: 2px 8px 2px 0;
+}
+
+.pub-prow-main {
+  padding: 6px 4px 6px 16px;
+}
+
+.pub-grip { padding: 7px 5px; }
+
+.pub-switch-btn {
+  border-radius: 99px;
+}
+
+.pub-radio-row {
+  padding: 7px 16px;
+}
+
+.pub-radio {
+  width: 16px;
+  height: 16px;
+  border-radius: 99px;
+  border-width: 2px;
+  border-style: solid;
+}
+
+.pub-radio-dot {
+  width: 8px;
+  height: 8px;
+  margin: 4px;
+  border-radius: 99px;
+  background-color: -st-accent-color;
+}
+
+.pub-radio.pub-radio-on { border-color: -st-accent-color; }
+
+/* Login card */
+
+.pub-card {
+  margin: 2px 16px 6px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  spacing: 6px;
+}
+
+.pub-card-title { font-weight: bold; }
+.pub-card-desc { font-size: 12px; }
+
+.pub-acts {
+  spacing: 8px;
+  padding-top: 4px;
+}
+
+.pub-btn {
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 13px;
+}
+
+
+.pub-btn.pub-btn-quiet {
+  background-color: transparent;
+  padding: 6px 8px;
+}
+
+.pub-entry {
+  font-size: 13px;
+}
+
+/* ===== Dark scheme ===== */
+
+
+.pub-dark .pub-dim { color: rgba(255, 255, 255, 0.62); }
+.pub-dark .pub-sep { background-color: rgba(255, 255, 255, 0.1); }
+.pub-dark .pub-t-warn { color: #f8e45c; }
+.pub-dark .pub-t-crit { color: #ff7b63; }
+.pub-dark .pub-track { background-color: rgba(255, 255, 255, 0.14); }
+.pub-dark .pub-pill { background-color: rgba(255, 255, 255, 0.12); color: rgba(255, 255, 255, 0.75); }
+.pub-dark .pub-ibtn:hover,
+.pub-dark .pub-ibtn:focus,
+.pub-dark .pub-orow:hover,
+.pub-dark .pub-orow:focus,
+.pub-dark .pub-link-row:hover,
+.pub-dark .pub-link-row:focus,
+.pub-dark .pub-radio-row:hover,
+.pub-dark .pub-radio-row:focus,
+.pub-dark .pub-prow:hover { background-color: rgba(255, 255, 255, 0.08); }
+.pub-dark .pub-ibtn:active,
+.pub-dark .pub-orow:active,
+.pub-dark .pub-link-row:active,
+.pub-dark .pub-radio-row:active { background-color: rgba(255, 255, 255, 0.14); }
+.pub-dark .pub-seg { background-color: rgba(255, 255, 255, 0.07); }
+.pub-dark .pub-seg-btn { color: rgba(255, 255, 255, 0.62); }
+.pub-dark .pub-seg-btn:hover { color: #ffffff; }
+.pub-dark .pub-seg-btn.pub-seg-on { background-color: rgba(255, 255, 255, 0.18); color: #ffffff; }
+.pub-dark .pub-card { background-color: rgba(255, 255, 255, 0.06); }
+.pub-dark .pub-btn { background-color: rgba(255, 255, 255, 0.1); }
+.pub-dark .pub-btn:hover { background-color: rgba(255, 255, 255, 0.16); }
+.pub-dark .pub-btn.pub-btn-quiet { color: rgba(255, 255, 255, 0.72); }
+.pub-dark .pub-btn.pub-btn-quiet:hover { background-color: rgba(255, 255, 255, 0.08); color: #ffffff; }
+.pub-dark .pub-pin { color: rgba(255, 255, 255, 0.4); }
+.pub-dark .pub-pin.pub-pin-on { color: -st-accent-color; }
+.pub-dark .pub-grip { color: rgba(255, 255, 255, 0.4); }
+.pub-dark .pub-radio { border-color: rgba(255, 255, 255, 0.4); }
+.pub-dark .pub-prow.pub-dragging { background-color: st-transparentize(-st-accent-color, 0.8); }
+
+/* ===== Light scheme ===== */
+
+
+.pub-light .pub-dim { color: rgba(0, 0, 0, 0.58); }
+.pub-light .pub-sep { background-color: rgba(0, 0, 0, 0.1); }
+.pub-light .pub-t-warn { color: #9c6e03; }
+.pub-light .pub-t-crit { color: #c01c28; }
+.pub-light .pub-track { background-color: rgba(0, 0, 0, 0.1); }
+.pub-light .pub-pill { background-color: rgba(0, 0, 0, 0.07); color: rgba(0, 0, 0, 0.66); }
+.pub-light .pub-ibtn:hover,
+.pub-light .pub-ibtn:focus,
+.pub-light .pub-orow:hover,
+.pub-light .pub-orow:focus,
+.pub-light .pub-link-row:hover,
+.pub-light .pub-link-row:focus,
+.pub-light .pub-radio-row:hover,
+.pub-light .pub-radio-row:focus,
+.pub-light .pub-prow:hover { background-color: rgba(0, 0, 0, 0.05); }
+.pub-light .pub-ibtn:active,
+.pub-light .pub-orow:active,
+.pub-light .pub-link-row:active,
+.pub-light .pub-radio-row:active { background-color: rgba(0, 0, 0, 0.1); }
+.pub-light .pub-seg { background-color: rgba(0, 0, 0, 0.06); }
+.pub-light .pub-seg-btn { color: rgba(0, 0, 0, 0.58); }
+.pub-light .pub-seg-btn:hover { color: #222226; }
+.pub-light .pub-seg-btn.pub-seg-on { background-color: #ffffff; color: #222226; }
+.pub-light .pub-card { background-color: rgba(0, 0, 0, 0.04); }
+.pub-light .pub-btn { background-color: rgba(0, 0, 0, 0.07); }
+.pub-light .pub-btn:hover { background-color: rgba(0, 0, 0, 0.12); }
+.pub-light .pub-btn.pub-btn-quiet { color: rgba(0, 0, 0, 0.66); }
+.pub-light .pub-btn.pub-btn-quiet:hover { background-color: rgba(0, 0, 0, 0.05); color: #222226; }
+.pub-light .pub-pin { color: rgba(0, 0, 0, 0.36); }
+.pub-light .pub-pin.pub-pin-on { color: -st-accent-color; }
+.pub-light .pub-grip { color: rgba(0, 0, 0, 0.36); }
+.pub-light .pub-radio { border-color: rgba(0, 0, 0, 0.36); }
+.pub-light .pub-prow.pub-dragging { background-color: st-transparentize(-st-accent-color, 0.85); }
+
+
+/* suggested action: declared last so it beats the per-scheme .pub-btn rules */
+.pub-dark .pub-btn.pub-btn-sug,
+.pub-dark .pub-btn.pub-btn-sug:hover,
+.pub-dark .pub-btn.pub-btn-sug:focus,
+.pub-dark .pub-btn.pub-btn-sug:active,
+.pub-light .pub-btn.pub-btn-sug,
+.pub-light .pub-btn.pub-btn-sug:hover,
+.pub-light .pub-btn.pub-btn-sug:focus,
+.pub-light .pub-btn.pub-btn-sug:active {
+  background-color: -st-accent-color;
+  color: -st-accent-fg-color;
+}

@@ -1,0 +1,4 @@
+node_modules/
+extension/bin/
+*.log
+.DS_Store
