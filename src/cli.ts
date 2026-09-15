@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { loadSettings, readSnapshot } from './engine.ts'
 import { defaultStore, pubConfigDir } from './credentials.ts'
@@ -24,7 +24,9 @@ async function main(): Promise<void> {
   const snapshot = await readSnapshot({ settings, store, configDir, previous })
   const json = `${JSON.stringify(snapshot, null, 2)}\n`
   await mkdir(dirname(out), { recursive: true })
-  await writeFile(out, json)
+  const tmp = `${out}.${String(process.pid)}.tmp`
+  await writeFile(tmp, json)
+  await rename(tmp, out)
   process.stdout.write(json)
 }
 

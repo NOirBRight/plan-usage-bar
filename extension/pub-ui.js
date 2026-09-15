@@ -16,7 +16,6 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
 const REFRESH_SECONDS = 300;
 const LOGIN_WAIT_SECONDS = 300;
-const PASTE_RESUME_MS = 10 * 60 * 1000;
 const PROVIDER_NAMES = {
     claude: 'Claude',
     codex: 'Codex',
@@ -111,15 +110,83 @@ function primaryWindow(provider) {
     return windows.find(window => window.primary) ?? windows[0] ?? null;
 }
 
+function snapshotErrorKind(provider) {
+    if (provider?.errorKind)
+        return provider.errorKind;
+    if (provider?.error === 'signed out')
+        return 'signed-out';
+    if (provider?.error === 'HTTP 429')
+        return 'rate-limit';
+    if (typeof provider?.error === 'string' && provider.error.length > 0)
+        return 'transport';
+    return null;
+}
+
+function isSignedOut(provider) {
+    return snapshotErrorKind(provider) === 'signed-out';
+}
+
+function hasFetchError(provider) {
+    return snapshotErrorKind(provider) !== null;
+}
+
 function errorText(provider) {
-    const error = provider?.error;
-    if (typeof error !== 'string' || error.length === 0)
+    const kind = snapshotErrorKind(provider);
+    if (kind === null)
         return '';
-    if (error === 'signed out')
+    if (kind === 'signed-out')
         return '未登录';
-    if (error === 'HTTP 429')
+    if (kind === 'rate-limit')
         return '抓取失败 · 请求过于频繁（HTTP 429）';
-    return `抓取失败 · ${error}`;
+    const error = provider?.error;
+    return typeof error === 'string' && error.length > 0 ? `抓取失败 · ${error}` : '抓取失败';
+}
+
+function splitUserToken(value) {
+    const index = String(value).indexOf('::');
+    if (index <= 0 || index === value.length - 2)
+        return null;
+    const userId = value.slice(0, index).trim();
+    const token = value.slice(index + 2).trim();
+    if (userId.length === 0 || token.length === 0)
+        return null;
+    return { userId, token };
+}
+
+function canonicalizeCredential(item) {
+    if (!item || typeof item.token !== 'string' || item.token.trim().length === 0)
+        return null;
+    const credential = { token: item.token.trim() };
+    if (typeof item.accountId === 'string' && item.accountId.trim().length > 0)
+        credential.accountId = item.accountId.trim();
+    if (typeof item.userId === 'string' && item.userId.trim().length > 0)
+        credential.userId = item.userId.trim();
+    if (typeof item.plan === 'string' && item.plan.trim().length > 0)
+        credential.plan = item.plan.trim();
+    const split = splitUserToken(credential.token);
+    if (credential.userId === undefined && split) {
+        credential.userId = split.userId;
+        credential.token = split.token;
+    }
+    return credential;
+}
+
+function credentialComplete(id, credential) {
+    if (!credential || typeof credential.token !== 'string' || credential.token.length === 0)
+        return false;
+    if (id === 'codex' && !credential.accountId)
+        return false;
+    if (id === 'cursor' && !credential.userId)
+        return false;
+    return true;
+}
+
+function viaLabel(source, id) {
+    if (source === 'pub')
+        return 'PUB 保存的凭据';
+    if (source === 'env')
+        return '通过环境变量';
+    return `通过 ${LOGIN[id]?.cli ?? '官方 CLI'}`;
 }
 
 function applyPrimary(provider, windowId) {
@@ -151,11 +218,14 @@ const PubIndicator = GObject.registerClass({
         this._selected = 'claude';
         this._page = 'overview';
         this._pendingPage = null;
-        this._login = null;
+        this._cli = null;
+        this._paste = null;
         this._drag = null;
         this._popoverOpen = false;
         this._refreshing = false;
-        this._pendingRefresh = false;
+        this._pendingReason = null;
+        this._engineProc = null;
+        this._timer = 0;
         this._stripIdle = 0;
         this._stripDirty = false;
         this._menuLater = 0;
@@ -208,7 +278,7 @@ const PubIndicator = GObject.registerClass({
                 this._choosePageOnOpen(this._pickStripUnderPointer());
                 this._rebuildMenu();
                 this._syncChipSelection();
-                this.refresh(true);
+                this.requestSnapshot('popover');
             } else {
                 this._endDrag(false);
                 this._rebuildStripSoon();
@@ -232,7 +302,7 @@ const PubIndicator = GObject.registerClass({
 
     _rebuildContext() {
         this._context.removeAll();
-        this._context.addAction('立即刷新', () => this.refresh(true));
+        this._context.addAction('立即刷新', () => this.requestSnapshot('manual'));
         this._context.addAction('设置…', () => {
             this._pendingPage = 'settings';
             this._openMainMenu();
@@ -456,7 +526,7 @@ const PubIndicator = GObject.registerClass({
 
         const mode = this._settings.remainingMode;
         for (const provider of this._snapshot.providers.filter(item => item.pinned)) {
-            const failed = typeof provider.error === 'string' && provider.error.length > 0;
+            const failed = hasFetchError(provider);
             const stale = failed && hasValue(provider.remaining);
             const chip = new St.BoxLayout({
                 style_class: 'pub-chip',
@@ -581,24 +651,15 @@ const PubIndicator = GObject.registerClass({
         } else if (hit === 'chip') {
             this._page = 'detail';
         } else if (this._shouldResumeLogin()) {
-            this._selected = this._login.id;
+            this._selected = this._cli.id;
             this._page = 'provider';
         } else {
             this._page = 'overview';
         }
     }
 
-    /** A running CLI login always resumes; an abandoned paste only for a short while (the browser steals focus). */
     _shouldResumeLogin() {
-        const login = this._login;
-        if (!login)
-            return false;
-        if (login.phase === 'waiting')
-            return true;
-        if (login.phase === 'paste' && Date.now() - (login.startedAt ?? 0) < PASTE_RESUME_MS)
-            return true;
-        this._login = null;
-        return false;
+        return this._cli?.phase === 'waiting';
     }
 
     _onMenuCaptured(event) {
@@ -629,19 +690,19 @@ const PubIndicator = GObject.registerClass({
     }
 
     _go(page) {
-        if (page !== 'provider' && this._login && this._login.phase !== 'waiting')
-            this._login = null;
+        if (page !== 'provider')
+            this._paste = null;
         this._page = page;
         this._rebuildMenu();
         this._syncChipSelection();
     }
 
     _isEditing() {
-        if (!this._popoverOpen || this._page !== 'provider' || !this._login)
+        if (!this._popoverOpen || this._page !== 'provider')
             return false;
-        if (this._login.phase === 'paste')
+        if (this._paste)
             return true;
-        return this._login.phase === 'waiting' && !!LOGIN[this._login.id]?.codeEntry && !this._login.submitted;
+        return this._cli?.phase === 'waiting' && !!LOGIN[this._cli.id]?.codeEntry && !this._cli.submitted;
     }
 
     /** Rebuild unless the user is typing into a credential field. */
@@ -703,13 +764,13 @@ const PubIndicator = GObject.registerClass({
             return '尚未抓取';
         const minutes = Math.floor((Date.now() - at) / 60000);
         if (minutes < 1)
-            return '刚刚更新';
+            return '刚刚刷新';
         if (minutes < 60)
-            return `更新于 ${minutes} 分钟前`;
+            return `刷新于 ${minutes} 分钟前`;
         const hours = Math.floor(minutes / 60);
         if (hours < 24)
-            return `更新于 ${hours} 小时前`;
-        return `更新于 ${Math.floor(hours / 24)} 天前`;
+            return `刷新于 ${hours} 小时前`;
+        return `刷新于 ${Math.floor(hours / 24)} 天前`;
     }
 
     _header({ title, iconId, pill, back, stamp, refresh, gear }) {
@@ -727,7 +788,7 @@ const PubIndicator = GObject.registerClass({
         if (stamp)
             header.add_child(this._label(this._stampText(), 'pub-dim pub-stamp'));
         if (refresh)
-            header.add_child(this._iconButton('view-refresh-symbolic', () => this.refresh(true), '立即刷新'));
+            header.add_child(this._iconButton('view-refresh-symbolic', () => this.requestSnapshot('manual'), '立即刷新'));
         if (gear)
             header.add_child(this._iconButton('emblem-system-symbolic', gear, '设置'));
         return header;
@@ -908,7 +969,7 @@ const PubIndicator = GObject.registerClass({
             warn.add_style_class_name('pub-t-crit');
             row.add_child(warn);
             row.add_child(this._label(failed, 'pub-t-crit', { x_expand: true, wrap: true }));
-            if (provider.error === 'signed out') {
+            if (isSignedOut(provider)) {
                 row.add_child(this._button('去登录', 'pub-btn-sug', () => this._go('provider')));
             } else if (hasValue(provider.remaining)) {
                 row.add_child(this._label('下面是上次数据', 'pub-dim pub-small'));
@@ -1054,30 +1115,24 @@ const PubIndicator = GObject.registerClass({
     }
 
     _credentialSource(id, live) {
-        if (this._credentials[id]?.token)
+        if (credentialComplete(id, this._credentials[id]))
             return 'pub';
         if (live?.credentialSource)
             return live.credentialSource;
-        const spec = LOGIN[id];
-        if (spec?.kind === 'cli' && live?.error !== 'signed out') {
-            const path = spec.file.replace(/^~/, GLib.get_home_dir());
-            if (GLib.file_test(path, GLib.FileTest.EXISTS))
-                return 'cli';
-        }
         return null;
     }
 
     _loginStatus(setting, live) {
-        if (this._login?.id === setting.id && this._login.phase === 'waiting')
+        if (this._cli?.id === setting.id && this._cli.phase === 'waiting')
             return { text: '正在浏览器中登录…', bad: false };
         if (!setting.enabled)
             return { text: '未监视 · 不抓取', bad: false };
         const source = this._credentialSource(setting.id, live);
         if (source === null)
             return { text: '未登录', bad: true };
-        const via = source === 'pub' ? 'PUB 保存的凭据' : `通过 ${LOGIN[setting.id]?.cli ?? '官方 CLI'}`;
+        const via = viaLabel(source, setting.id);
         const plan = live?.plan ? ` · ${live.plan}` : '';
-        if (live?.error && live.error !== 'signed out')
+        if (live && hasFetchError(live) && !isSignedOut(live))
             return { text: `已登录 · ${via} · 抓取失败 ${live.error}`, bad: true };
         return { text: `已登录 · ${via}${plan}`, bad: false };
     }
@@ -1238,22 +1293,23 @@ const PubIndicator = GObject.registerClass({
         };
         const describe = text => this._label(text, 'pub-dim pub-card-desc', { x_expand: true, wrap: true });
         const acts = () => new St.BoxLayout({ style_class: 'pub-acts', x_expand: true });
-        const login = this._login?.id === id ? this._login : null;
+        const cli = this._cli?.id === id ? this._cli : null;
+        const paste = this._paste?.id === id ? this._paste : null;
 
-        if (login?.phase === 'waiting') {
+        if (cli?.phase === 'waiting') {
             card.add_child(title('正在浏览器中登录'));
             if (spec.codeEntry) {
                 card.add_child(describe(`在浏览器里完成授权。如果页面显示 Authentication code，点「Copy code」后粘贴到下面。`));
-                if (login.submitted) {
+                if (cli.submitted) {
                     card.add_child(this._label('正在验证授权码…', 'pub-dim pub-small'));
                 } else {
                     const code = new St.Entry({ hint_text: spec.codeEntry.hint, can_focus: true, x_expand: true });
                     code.add_style_class_name('pub-entry');
-                    const submit = () => this._submitLoginCode(login, code.get_text());
+                    const submit = () => this._submitLoginCode(cli, code.get_text());
                     code.clutter_text.connect('activate', submit);
                     card.add_child(code);
-                    if (login.message)
-                        card.add_child(this._label(login.message, 'pub-small pub-t-crit', { wrap: true }));
+                    if (cli.message)
+                        card.add_child(this._label(cli.message, 'pub-small pub-t-crit', { wrap: true }));
                     const codeRow = acts();
                     codeRow.add_child(this._button('提交授权码', 'pub-btn-sug', submit));
                     card.add_child(codeRow);
@@ -1269,8 +1325,8 @@ const PubIndicator = GObject.registerClass({
             const row = acts();
             row.add_child(this._label('等待授权…', 'pub-dim pub-small'));
             row.add_child(this._spacer());
-            if (login.url)
-                row.add_child(this._button('打开授权页 ↗', 'pub-btn-quiet', () => this._openUri(login.url, false)));
+            if (cli.url)
+                row.add_child(this._button('打开授权页 ↗', 'pub-btn-quiet', () => this._openUri(cli.url, false)));
             row.add_child(this._button('取消', 'pub-btn-quiet', () => {
                 this._cancelLogin();
                 this._rebuildMenu();
@@ -1279,7 +1335,7 @@ const PubIndicator = GObject.registerClass({
             return card;
         }
 
-        if (login?.phase === 'paste') {
+        if (paste) {
             card.add_child(title('粘贴凭据'));
             if (spec.kind === 'cookie')
                 card.add_child(describe('在浏览器登录 cursor.com 后，从开发者工具的 Cookie 里复制 WorkosCursorSessionToken。'));
@@ -1297,12 +1353,12 @@ const PubIndicator = GObject.registerClass({
                 extra.add_style_class_name('pub-entry');
                 card.add_child(extra);
             }
-            if (login.message)
-                card.add_child(this._label(login.message, 'pub-small pub-t-crit', { wrap: true }));
+            if (paste.message)
+                card.add_child(this._label(paste.message, 'pub-small pub-t-crit', { wrap: true }));
             const row = acts();
             row.add_child(this._button('保存', 'pub-btn-sug', () => this._savePaste(id, token.get_text(), extra?.get_text() ?? '')));
             row.add_child(this._button('取消', 'pub-btn-quiet', () => {
-                this._login = null;
+                this._paste = null;
                 this._rebuildMenu();
             }));
             row.add_child(this._spacer());
@@ -1324,12 +1380,14 @@ const PubIndicator = GObject.registerClass({
             card.add_child(title('已登录', live?.plan));
             card.add_child(describe(source === 'pub'
                 ? '凭据由 PUB 保存在 ~/.config/pub/credentials.json，只有你可读。'
-                : `凭据来自 ${spec.cli}（${spec.file}），由它负责续期。`));
-            if (live?.error && live.error !== 'signed out')
+                : source === 'env'
+                    ? '凭据来自环境变量，PUB 不能在这里移除。'
+                    : `凭据来自 ${spec.cli}（${spec.file}）。用量过期后请在官方 CLI 里续期，PUB 不代为刷新。`));
+            if (live && hasFetchError(live) && !isSignedOut(live))
                 card.add_child(this._label(`上次抓取失败：${live.error}`, 'pub-small pub-t-crit', { wrap: true }));
             if (source === 'pub') {
                 row.add_child(this._button('移除凭据', '', () => this._clearCredential(id)));
-            } else if (cliPath) {
+            } else if (source === 'cli' && cliPath) {
                 row.add_child(this._button('重新登录 ↗', '', () => this._startCliLogin(id)));
             }
             row.add_child(this._button(source === 'pub' ? '换一个凭据…' : '改用粘贴…', 'pub-btn-quiet', () => this._beginPaste(id)));
@@ -1355,9 +1413,11 @@ const PubIndicator = GObject.registerClass({
                 }));
             }
             row.add_child(this._button('手动粘贴…', 'pub-btn-quiet', () => this._beginPaste(id)));
+            if (this._credentials[id]?.token)
+                row.add_child(this._button('移除凭据', '', () => this._clearCredential(id)));
         }
-        if (login?.phase === 'error')
-            card.add_child(this._label(login.message, 'pub-small pub-t-crit', { wrap: true }));
+        if (cli?.phase === 'error')
+            card.add_child(this._label(cli.message, 'pub-small pub-t-crit', { wrap: true }));
         card.add_child(row);
         return card;
     }
@@ -1384,9 +1444,9 @@ const PubIndicator = GObject.registerClass({
     }
 
     _beginPaste(id) {
-        if (this._login?.proc)
+        if (this._cli?.proc)
             this._cancelLogin();
-        this._login = { id, phase: 'paste', message: '', startedAt: Date.now() };
+        this._paste = { id, message: '' };
         this._rebuildMenu();
     }
 
@@ -1394,8 +1454,9 @@ const PubIndicator = GObject.registerClass({
         const spec = LOGIN[id];
         const path = spec ? this._findCli(spec.bin) : null;
         this._cancelLogin();
+        this._paste = null;
         if (!spec || !path) {
-            this._login = { id, phase: 'error', message: `没有找到 ${spec?.bin ?? id} 命令。` };
+            this._cli = { id, phase: 'error', message: `没有找到 ${spec?.bin ?? id} 命令。` };
             this._rebuildMenu();
             return;
         }
@@ -1411,11 +1472,11 @@ const PubIndicator = GObject.registerClass({
             launcher.setenv('NO_COLOR', '1', true);
             login.proc = launcher.spawnv([path, ...spec.args]);
         } catch (error) {
-            this._login = { id, phase: 'error', message: `无法启动 ${spec.cli}：${error.message ?? error}` };
+            this._cli = { id, phase: 'error', message: `无法启动 ${spec.cli}：${error.message ?? error}` };
             this._rebuildMenu();
             return;
         }
-        this._login = login;
+        this._cli = login;
 
         const stream = new Gio.DataInputStream({ base_stream: login.proc.get_stdout_pipe(), close_base_stream: true });
         const readLine = () => {
@@ -1429,14 +1490,14 @@ const PubIndicator = GObject.registerClass({
                 if (line === null)
                     return;
                 login.output = `${login.output}\n${line}`.slice(-4000);
-                const visible = this._alive && this._popoverOpen && this._page === 'provider' && this._login === login;
+                const visible = this._alive && this._popoverOpen && this._page === 'provider' && this._cli === login;
                 const url = line.match(/https:\/\/[^\s"'<>]+/u);
                 if (url && !login.url) {
                     login.url = url[0];
                     if (visible && !this._isEditing())
                         this._rebuildMenu();
                 }
-                if (spec.codeEntry?.invalid.test(line) && this._login === login) {
+                if (spec.codeEntry?.invalid.test(line) && this._cli === login) {
                     login.submitted = false;
                     login.message = '授权码无效或已过期。请在浏览器里重新点「Copy code」，粘贴完整内容。';
                     if (visible)
@@ -1447,13 +1508,13 @@ const PubIndicator = GObject.registerClass({
         };
         readLine();
 
-        login.proc.wait_async(null, (proc, result) => {
+        login.proc.wait_async(login.cancellable, (proc, result) => {
             try {
                 proc.wait_finish(result);
             } catch (_error) {
                 // cancelled or killed
             }
-            if (!this._alive || this._login !== login)
+            if (!this._alive || this._cli !== login)
                 return;
             if (login.timeout) {
                 GLib.Source.remove(login.timeout);
@@ -1461,12 +1522,12 @@ const PubIndicator = GObject.registerClass({
             }
             const ok = proc.get_if_exited() && proc.get_exit_status() === 0;
             if (ok) {
-                this._login = null;
+                this._cli = null;
                 this._loadCredentials();
-                this.refresh(true);
+                this.requestSnapshot('login');
             } else {
                 const detail = lastLine(login.output);
-                this._login = {
+                this._cli = {
                     id,
                     phase: 'error',
                     message: detail ? `${spec.cli} 登录没有完成：${detail}` : `${spec.cli} 登录没有完成。`,
@@ -1480,9 +1541,9 @@ const PubIndicator = GObject.registerClass({
 
         login.timeout = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, LOGIN_WAIT_SECONDS, () => {
             login.timeout = 0;
-            if (this._alive && this._login === login) {
+            if (this._alive && this._cli === login) {
                 this._cancelLogin();
-                this._login = { id, phase: 'error', message: '等待授权超时，已停止。可以再试一次。' };
+                this._cli = { id, phase: 'error', message: '等待授权超时，已停止。可以再试一次。' };
                 if (this._popoverOpen)
                     this._rebuildMenuSafe();
             }
@@ -1492,7 +1553,7 @@ const PubIndicator = GObject.registerClass({
     }
 
     _submitLoginCode(login, text) {
-        if (this._login !== login || !login.proc)
+        if (this._cli !== login || !login.proc)
             return;
         const code = text.trim();
         if (!code.includes('#')) {
@@ -1504,6 +1565,11 @@ const PubIndicator = GObject.registerClass({
             const stdin = login.proc.get_stdin_pipe();
             stdin.write_all(new TextEncoder().encode(`${code}\n`), null);
             stdin.flush(null);
+            try {
+                stdin.close(null);
+            } catch (_error) {
+                // already closed
+            }
             login.submitted = true;
             login.message = '';
         } catch (error) {
@@ -1513,8 +1579,8 @@ const PubIndicator = GObject.registerClass({
     }
 
     _cancelLogin() {
-        const login = this._login;
-        this._login = null;
+        const login = this._cli;
+        this._cli = null;
         if (!login?.proc)
             return;
         login.cancelled = true;
@@ -1535,29 +1601,35 @@ const PubIndicator = GObject.registerClass({
         const token = tokenText.trim();
         const extra = extraText.trim();
         if (token.length === 0) {
-            this._login = { id, phase: 'paste', message: '先粘贴凭据。', startedAt: Date.now() };
+            this._paste = { id, message: '先粘贴凭据。' };
             this._rebuildMenu();
             return;
         }
         if (spec?.extra?.required && extra.length === 0) {
-            this._login = { id, phase: 'paste', message: `还需要填写 ${spec.extra.hint}。`, startedAt: Date.now() };
+            this._paste = { id, message: `还需要填写 ${spec.extra.hint}。` };
             this._rebuildMenu();
             return;
         }
-        const credential = { token };
+        const raw = { token };
         if (spec?.extra && extra.length > 0)
-            credential[spec.extra.key] = extra;
+            raw[spec.extra.key] = extra;
+        const credential = canonicalizeCredential(raw);
+        if (!credential) {
+            this._paste = { id, message: '先粘贴凭据。' };
+            this._rebuildMenu();
+            return;
+        }
         this._credentials[id] = credential;
         this._writeCredentials();
-        this._login = null;
-        this.refresh(true);
+        this._paste = null;
+        this.requestSnapshot('manual');
         this._rebuildMenu();
     }
 
     _clearCredential(id) {
         delete this._credentials[id];
         this._writeCredentials();
-        this.refresh(true);
+        this.requestSnapshot('manual');
         this._rebuildMenu();
     }
 
@@ -1579,13 +1651,13 @@ const PubIndicator = GObject.registerClass({
         if (!enabled) {
             setting.pinned = false;
             this._snapshot.providers = this._snapshot.providers.filter(provider => provider.id !== id);
-            if (this._login?.id === id)
+            if (this._cli?.id === id)
                 this._cancelLogin();
         }
         this._writeSettings();
         this._rebuildStripSoon();
         this._rebuildMenuLater();
-        this.refresh(true);
+        this.requestSnapshot('manual');
     }
 
     _setPinned(id, pinned, immediate) {
@@ -1617,7 +1689,7 @@ const PubIndicator = GObject.registerClass({
         this._rebuildStripSoon();
         this._rebuildMenu();
         if (windowId === null)
-            this.refresh(true);
+            this.requestSnapshot('manual');
     }
 
     _applyProviderOrder() {
@@ -1711,16 +1783,9 @@ const PubIndicator = GObject.registerClass({
             if (!parsed || typeof parsed !== 'object')
                 return;
             for (const [id, item] of Object.entries(parsed)) {
-                if (!item || typeof item.token !== 'string' || item.token.trim().length === 0)
-                    continue;
-                const credential = { token: item.token.trim() };
-                if (typeof item.accountId === 'string' && item.accountId.trim().length > 0)
-                    credential.accountId = item.accountId.trim();
-                if (typeof item.userId === 'string' && item.userId.trim().length > 0)
-                    credential.userId = item.userId.trim();
-                if (typeof item.plan === 'string' && item.plan.trim().length > 0)
-                    credential.plan = item.plan.trim();
-                this._credentials[id] = credential;
+                const credential = canonicalizeCredential(item);
+                if (credential)
+                    this._credentials[id] = credential;
             }
         } catch (error) {
             console.error('PUB: could not read credentials', error);
@@ -1805,11 +1870,11 @@ const PubIndicator = GObject.registerClass({
         }
     }
 
-    refresh(force) {
+    requestSnapshot(reason) {
         this._readSnapshotFile();
         if (this._refreshing) {
-            if (force)
-                this._pendingRefresh = true;
+            if (reason !== 'timer')
+                this._pendingReason = reason;
             this._refreshUi();
             return;
         }
@@ -1818,6 +1883,7 @@ const PubIndicator = GObject.registerClass({
             ? '/usr/bin/node'
             : GLib.find_program_in_path('node');
         if (!engine.query_exists(null) || !node) {
+            this._armTimer();
             this._refreshUi();
             return;
         }
@@ -1827,27 +1893,65 @@ const PubIndicator = GObject.registerClass({
                 [node, engine.get_path(), 'snapshot', '--out', this._snapshotPath()],
                 Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE,
             );
+            this._engineProc = proc;
             proc.communicate_utf8_async(null, null, (subprocess, result) => {
-                if (!this._alive)
-                    return;
                 this._refreshing = false;
+                this._engineProc = null;
                 try {
                     subprocess.communicate_utf8_finish(result);
                 } catch (error) {
-                    console.error('PUB: engine failed', error);
+                    if (this._alive)
+                        console.error('PUB: engine failed', error);
                 }
+                if (!this._alive)
+                    return;
                 this._readSnapshotFile();
                 this._refreshUi();
-                if (this._pendingRefresh) {
-                    this._pendingRefresh = false;
-                    this.refresh(true);
+                this._armTimer();
+                if (this._pendingReason) {
+                    const next = this._pendingReason;
+                    this._pendingReason = null;
+                    this.requestSnapshot(next);
                 }
             });
         } catch (error) {
             this._refreshing = false;
+            this._engineProc = null;
             console.error('PUB: could not spawn engine', error);
+            this._armTimer();
         }
         this._refreshUi();
+    }
+
+    _armTimer() {
+        if (!this._alive)
+            return;
+        if (this._timer) {
+            GLib.Source.remove(this._timer);
+            this._timer = 0;
+        }
+        this._timer = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, REFRESH_SECONDS, () => {
+            this._timer = 0;
+            this.requestSnapshot('timer');
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _killEngine() {
+        if (this._timer) {
+            GLib.Source.remove(this._timer);
+            this._timer = 0;
+        }
+        if (this._engineProc) {
+            try {
+                this._engineProc.force_exit();
+            } catch (_error) {
+                // already exited
+            }
+            this._engineProc = null;
+        }
+        this._refreshing = false;
+        this._pendingReason = null;
     }
 
     // ---------- probe (PUB_PROBE=1 only, used by scripts/nested-shell.sh) ----------
@@ -1894,7 +1998,11 @@ const PubIndicator = GObject.registerClass({
                 popoverOpen: this._popoverOpen,
                 page: this._page,
                 selected: this._selected,
-                login: this._login ? { id: this._login.id, phase: this._login.phase } : null,
+                login: this._cli
+                    ? { id: this._cli.id, phase: this._cli.phase }
+                    : this._paste
+                        ? { id: this._paste.id, phase: 'paste' }
+                        : null,
                 ui: import.meta.url,
                 lastError: this._probeLastError || '',
                 lastEvent: extra && extra.event && extra.event !== 'poll'
@@ -1966,8 +2074,8 @@ const PubIndicator = GObject.registerClass({
         else if (verb === 'login') {
             this._selected = arg;
             this._startCliLogin(arg);
-        } else if (verb === 'code' && this._login)
-            this._submitLoginCode(this._login, command.slice('code:'.length));
+        } else if (verb === 'code' && this._cli)
+            this._submitLoginCode(this._cli, command.slice('code:'.length));
         else if (verb === 'reload')
             GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
                 this._ext.reload();
@@ -2044,6 +2152,7 @@ const PubIndicator = GObject.registerClass({
         this._alive = false;
         this._endDrag(false);
         this._cancelLogin();
+        this._killEngine();
         if (this._probeTimer) {
             GLib.Source.remove(this._probeTimer);
             this._probeTimer = 0;
@@ -2078,24 +2187,15 @@ export class PubRuntime {
     constructor(extension) {
         this._ext = extension;
         this._indicator = null;
-        this._timer = 0;
     }
 
     enable() {
         this._indicator = new PubIndicator(this._ext);
         Main.panel.addToStatusArea(this._ext.uuid, this._indicator, 1, 'right');
-        this._indicator.refresh(true);
-        this._timer = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, REFRESH_SECONDS, () => {
-            this._indicator.refresh(false);
-            return GLib.SOURCE_CONTINUE;
-        });
+        this._indicator.requestSnapshot('manual');
     }
 
     disable() {
-        if (this._timer) {
-            GLib.Source.remove(this._timer);
-            this._timer = 0;
-        }
         this._indicator?.destroy();
         this._indicator = null;
     }

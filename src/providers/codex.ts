@@ -1,7 +1,18 @@
-import type { ProviderSnapshot, QuotaWindow } from '../snapshot.ts'
+import type { ProviderAccess } from '../credentials.ts'
+import { getJson, type FetchLike } from '../http.ts'
+import type { ProviderIdentity, ProviderSnapshot, QuotaWindow } from '../snapshot.ts'
 import { isRecord, remainingFromUsedPercent, resetLabel, isoInstant } from '../remaining.ts'
+import type { ProviderAdapter, UsageFields } from './types.ts'
 
-export function parseCodexUsage(
+export const identity: ProviderIdentity = {
+  id: 'codex',
+  name: 'Codex',
+  accent: '#10a37f',
+  usageUrl: 'https://chatgpt.com/#settings',
+  statusUrl: 'https://status.openai.com',
+}
+
+function parseCodexUsage(
   body: unknown,
   now: number,
 ): Pick<ProviderSnapshot, 'plan' | 'remaining' | 'windows'> {
@@ -83,3 +94,18 @@ function titleCase(value: string): string {
   if (value.length === 0) return value
   return value[0]!.toUpperCase() + value.slice(1)
 }
+
+async function pull(access: ProviderAccess, fetchImpl: FetchLike, now: number): Promise<UsageFields> {
+  const accountId = access.accountId
+  if (accountId === undefined) throw new Error('Codex access has no accountId')
+  const body = await getJson(fetchImpl, 'https://chatgpt.com/backend-api/wham/usage', {
+    authorization: `Bearer ${access.token}`,
+    'chatgpt-account-id': accountId,
+    accept: 'application/json',
+    'cache-control': 'no-store',
+    'user-agent': 'pub-engine',
+  })
+  return parseCodexUsage(body, now)
+}
+
+export const codex: ProviderAdapter = { identity, pull }

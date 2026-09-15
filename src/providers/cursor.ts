@@ -1,7 +1,18 @@
-import type { ProviderSnapshot, QuotaWindow } from '../snapshot.ts'
+import type { ProviderAccess } from '../credentials.ts'
+import { getJson, type FetchLike } from '../http.ts'
+import type { ProviderIdentity, ProviderSnapshot, QuotaWindow } from '../snapshot.ts'
 import { isRecord, remainingFromUsedPercent, resetLabel, isoInstant, toNumber } from '../remaining.ts'
+import type { ProviderAdapter, UsageFields } from './types.ts'
 
-export function parseCursorUsage(
+export const identity: ProviderIdentity = {
+  id: 'cursor',
+  name: 'Cursor',
+  accent: '#111111',
+  usageUrl: 'https://cursor.com/dashboard',
+  statusUrl: 'https://status.cursor.com',
+}
+
+function parseCursorUsage(
   body: unknown,
   now: number,
 ): Pick<ProviderSnapshot, 'plan' | 'remaining' | 'windows' | 'extraNote'> {
@@ -41,6 +52,18 @@ export function parseCursorUsage(
   const remaining = total === undefined
     ? windows[0]!.remaining
     : remainingFromUsedPercent(total)
+  if (total !== undefined) {
+    windows.push({
+      id: 'total',
+      label: 'Total',
+      remaining,
+      ...resetsAt === undefined ? {} : { resetsAt },
+      resetLabel: reset,
+      primary: true,
+    })
+  } else if (!windows.some(window => window.primary)) {
+    windows[0]!.primary = true
+  }
   const membership = body['membershipType']
   const extraNote = onDemand !== undefined && onDemand['enabled'] === false ? 'On-demand off' : undefined
   return {
@@ -55,3 +78,16 @@ function titleCase(value: string): string {
   if (value.length === 0) return value
   return value[0]!.toUpperCase() + value.slice(1)
 }
+
+async function pull(access: ProviderAccess, fetchImpl: FetchLike, now: number): Promise<UsageFields> {
+  const userId = access.userId
+  if (userId === undefined) throw new Error('Cursor access has no userId')
+  const cookie = `WorkosCursorSessionToken=${encodeURIComponent(`${userId}::${access.token}`)}`
+  const body = await getJson(fetchImpl, 'https://cursor.com/api/usage-summary', {
+    accept: 'application/json',
+    cookie,
+  })
+  return parseCursorUsage(body, now)
+}
+
+export const cursor: ProviderAdapter = { identity, pull }

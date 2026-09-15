@@ -1,28 +1,20 @@
-import { IDENTITIES, type ProviderSnapshot, type PubSettings, type Snapshot } from './snapshot.ts'
+import { parseSettings, type ProviderSnapshot, type PubSettings, type Snapshot, type SnapshotErrorKind } from './snapshot.ts'
 import {
   defaultStore,
   loadPubCredentials,
-  parseSettings,
   pubConfigDir,
-  readClaudeAccess,
-  readCodexAccess,
-  readCursorAccess,
-  readGrokAccess,
-  readOllamaKey,
   readOptional,
+  resolveAccess,
   type CredentialStore,
-  type PubCredential,
 } from './credentials.ts'
-import { parseClaudeUsage } from './providers/claude.ts'
-import { parseCodexUsage } from './providers/codex.ts'
-import { parseCursorUsage } from './providers/cursor.ts'
-import { parseGrokUsage } from './providers/grok.ts'
-import { parseOllamaUsage } from './providers/ollama.ts'
+import { HttpError, type FetchLike } from './http.ts'
+import { claude } from './providers/claude.ts'
+import { codex } from './providers/codex.ts'
+import { cursor } from './providers/cursor.ts'
+import { grok } from './providers/grok.ts'
+import { ollamaCloud } from './providers/ollama.ts'
+import type { ProviderAdapter } from './providers/types.ts'
 import { join } from 'node:path'
-
-export interface FetchLike {
-  (url: string, init: RequestInit): Promise<Response>
-}
 
 export interface SnapshotRequest {
   settings: PubSettings
@@ -33,7 +25,13 @@ export interface SnapshotRequest {
   previous?: Snapshot
 }
 
-const TIMEOUT_MS = 15_000
+const ADAPTERS: Record<string, ProviderAdapter> = {
+  claude,
+  codex,
+  cursor,
+  grok,
+  'ollama-cloud': ollamaCloud,
+}
 
 export async function readSnapshot(request: SnapshotRequest): Promise<Snapshot> {
   const store = request.store ?? defaultStore()
@@ -46,9 +44,9 @@ export async function readSnapshot(request: SnapshotRequest): Promise<Snapshot> 
   const providers: ProviderSnapshot[] = []
   for (const row of request.settings.providers) {
     if (!row.enabled) continue
-    const identity = IDENTITIES[row.id]
-    if (identity === undefined) continue
-    const next = await readProvider(row.id, row.pinned, identity, store, pub[row.id], fetchImpl, now, fetchedAt)
+    const adapter = ADAPTERS[row.id]
+    if (adapter === undefined) continue
+    const next = await readProvider(row.id, row.pinned, adapter, store, pub[row.id], fetchImpl, now, fetchedAt)
     providers.push(applyPrimary(keepLastGood(next, previousById.get(row.id)), row.primary))
   }
   return {
@@ -71,7 +69,9 @@ export function applyPrimary(provider: ProviderSnapshot, windowId?: string): Pro
 }
 
 export function keepLastGood(next: ProviderSnapshot, previous?: ProviderSnapshot): ProviderSnapshot {
-  if (next.error === undefined || next.error === 'signed out' || previous === undefined)
+  if (next.errorKind === 'signed-out' || next.error === 'signed out' || previous === undefined)
+    return next
+  if (next.error === undefined && next.errorKind === undefined)
     return next
   if (previous.remaining === null || previous.remaining === undefined)
     return next
@@ -84,19 +84,21 @@ export function keepLastGood(next: ProviderSnapshot, previous?: ProviderSnapshot
     extraNote: next.extraNote ?? previous.extraNote,
     cost: next.cost ?? previous.cost,
     credentialSource: next.credentialSource ?? previous.credentialSource,
+    fetchedAt: previous.fetchedAt,
   }
 }
 
 async function readProvider(
   id: string,
   pinned: boolean,
-  identity: (typeof IDENTITIES)[string],
+  adapter: ProviderAdapter,
   store: CredentialStore,
-  pub: PubCredential | undefined,
+  pub: Parameters<typeof resolveAccess>[2],
   fetchImpl: FetchLike,
   now: number,
   fetchedAt: string,
 ): Promise<ProviderSnapshot> {
+  const identity = adapter.identity
   const base: ProviderSnapshot = {
     id: identity.id,
     name: identity.name,
@@ -108,106 +110,32 @@ async function readProvider(
     remaining: null,
     windows: [],
   }
+  let access
   try {
-    if (id === 'claude') {
-      const access = await readClaudeAccess(store, pub)
-      if (access === undefined) return { ...base, error: 'signed out' }
-      const body = await getJson(fetchImpl, 'https://api.anthropic.com/api/oauth/usage?at_wall=1&skip_spend=1', {
-        authorization: `Bearer ${access.token}`,
-        accept: 'application/json',
-        'anthropic-beta': 'oauth-2025-04-20',
-        'user-agent': 'pub-engine',
-      })
-      return { ...base, ...parseClaudeUsage(body, now, access.plan), credentialSource: access.source }
-    }
-    if (id === 'codex') {
-      const access = await readCodexAccess(store, pub)
-      if (access === undefined) return { ...base, error: 'signed out' }
-      const body = await getJson(fetchImpl, 'https://chatgpt.com/backend-api/wham/usage', {
-        authorization: `Bearer ${access.token}`,
-        'chatgpt-account-id': access.accountId,
-        accept: 'application/json',
-        'cache-control': 'no-store',
-        'user-agent': 'pub-engine',
-      })
-      return { ...base, ...parseCodexUsage(body, now), credentialSource: access.source }
-    }
-    if (id === 'cursor') {
-      const access = await readCursorAccess(store, pub)
-      if (access === undefined) return { ...base, error: 'signed out' }
-      const cookie = access.userId === undefined
-        ? undefined
-        : `WorkosCursorSessionToken=${encodeURIComponent(`${access.userId}::${access.token}`)}`
-      const body = await getJson(fetchImpl, 'https://cursor.com/api/usage-summary', {
-        accept: 'application/json',
-        ...cookie === undefined ? {} : { cookie },
-      })
-      return { ...base, ...parseCursorUsage(body, now), credentialSource: access.source }
-    }
-    if (id === 'grok') {
-      const access = await readGrokAccess(store, pub)
-      if (access === undefined) return { ...base, error: 'signed out' }
-      const body = await getJson(fetchImpl, 'https://cli-chat-proxy.grok.com/v1/billing?format=credits', {
-        authorization: `Bearer ${access.token}`,
-        accept: 'application/json',
-        'x-grok-client-version': '1.0.30',
-        'x-grok-client-identifier': 'grok-shell',
-      })
-      const settings = await getJsonOptional(fetchImpl, 'https://cli-chat-proxy.grok.com/v1/settings', {
-        authorization: `Bearer ${access.token}`,
-        accept: 'application/json',
-        'x-grok-client-version': '1.0.30',
-        'x-grok-client-identifier': 'grok-shell',
-      })
-      const plan = isSettingsPlan(settings)
-      return { ...base, ...parseGrokUsage(body, now, plan), credentialSource: access.source }
-    }
-    if (id === 'ollama-cloud') {
-      const key = await readOllamaKey(store, pub)
-      if (key === undefined) return { ...base, error: 'signed out' }
-      const body = await getJson(fetchImpl, 'https://ollama.com/api/usage', {
-        authorization: `Bearer ${key.token}`,
-        accept: 'application/json',
-      })
-      return { ...base, ...parseOllamaUsage(body, now), credentialSource: key.source }
-    }
-    return { ...base, error: 'unknown provider' }
+    access = await resolveAccess(id, store, pub)
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'usage read failed'
-    return { ...base, error: message }
+    return { ...base, ...classifyFetchError(error) }
   }
-}
-
-function isSettingsPlan(value: unknown): string | undefined {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
-  const plan = (value as Record<string, unknown>)['subscription_tier_display']
-  return typeof plan === 'string' && plan.length > 0 ? plan : undefined
-}
-
-async function getJson(fetchImpl: FetchLike, url: string, headers: Record<string, string>): Promise<unknown> {
-  const response = await fetchImpl(url, {
-    method: 'GET',
-    headers,
-    redirect: 'error',
-    signal: AbortSignal.timeout(TIMEOUT_MS),
-  })
-  if (!response.ok) {
-    await response.body?.cancel()
-    throw new Error(`HTTP ${String(response.status)}`)
-  }
-  return await response.json()
-}
-
-async function getJsonOptional(
-  fetchImpl: FetchLike,
-  url: string,
-  headers: Record<string, string>,
-): Promise<unknown | undefined> {
+  if (access === undefined)
+    return { ...base, error: 'signed out', errorKind: 'signed-out' }
   try {
-    return await getJson(fetchImpl, url, headers)
-  } catch {
-    return undefined
+    const usage = await adapter.pull(access, fetchImpl, now)
+    return { ...base, ...usage, credentialSource: access.source }
+  } catch (error) {
+    return { ...base, credentialSource: access.source, ...classifyFetchError(error) }
   }
+}
+
+function classifyFetchError(error: unknown): { error: string, errorKind: SnapshotErrorKind } {
+  if (error instanceof HttpError) {
+    if (error.status === 401 || error.status === 403)
+      return { error: error.message, errorKind: 'unauthorized' }
+    if (error.status === 429)
+      return { error: error.message, errorKind: 'rate-limit' }
+    return { error: error.message, errorKind: 'transport' }
+  }
+  const message = error instanceof Error ? error.message : 'usage read failed'
+  return { error: message, errorKind: 'transport' }
 }
 
 export async function loadSettings(store: CredentialStore, configDir: string): Promise<PubSettings> {

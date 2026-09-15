@@ -1,5 +1,16 @@
-import type { ProviderSnapshot, QuotaWindow } from '../snapshot.ts'
+import type { ProviderAccess } from '../credentials.ts'
+import { getJson, type FetchLike } from '../http.ts'
+import type { ProviderIdentity, ProviderSnapshot, QuotaWindow } from '../snapshot.ts'
 import { isRecord, remainingFromUsedPercent, resetLabel, isoInstant } from '../remaining.ts'
+import type { ProviderAdapter, UsageFields } from './types.ts'
+
+export const identity: ProviderIdentity = {
+  id: 'claude',
+  name: 'Claude',
+  accent: '#C96442',
+  usageUrl: 'https://claude.ai/settings/usage',
+  statusUrl: 'https://status.anthropic.com',
+}
 
 const KIND_LABEL: Record<string, string> = {
   session: 'Session',
@@ -7,7 +18,7 @@ const KIND_LABEL: Record<string, string> = {
   weekly: 'Weekly',
 }
 
-export function parseClaudeUsage(
+function parseClaudeUsage(
   body: unknown,
   now: number,
   plan?: string,
@@ -62,3 +73,15 @@ function titleCase(value: string): string {
   if (value.length === 0) return value
   return value[0]!.toUpperCase() + value.slice(1)
 }
+
+async function pull(access: ProviderAccess, fetchImpl: FetchLike, now: number): Promise<UsageFields> {
+  const body = await getJson(fetchImpl, 'https://api.anthropic.com/api/oauth/usage?at_wall=1&skip_spend=1', {
+    authorization: `Bearer ${access.token}`,
+    accept: 'application/json',
+    'anthropic-beta': 'oauth-2025-04-20',
+    'user-agent': 'pub-engine',
+  })
+  return parseClaudeUsage(body, now, access.plan)
+}
+
+export const claude: ProviderAdapter = { identity, pull }

@@ -1,5 +1,16 @@
-import type { ProviderSnapshot, QuotaWindow } from '../snapshot.ts'
+import type { ProviderAccess } from '../credentials.ts'
+import { getJson, type FetchLike } from '../http.ts'
+import type { ProviderIdentity, ProviderSnapshot, QuotaWindow } from '../snapshot.ts'
 import { isRecord, remainingFromUsedFraction, resetLabel, isoInstant } from '../remaining.ts'
+import type { ProviderAdapter, UsageFields } from './types.ts'
+
+export const identity: ProviderIdentity = {
+  id: 'ollama-cloud',
+  name: 'Ollama Cloud',
+  accent: '#111111',
+  usageUrl: 'https://ollama.com',
+  statusUrl: 'https://status.ollama.com',
+}
 
 const LIMIT_LABEL: Record<string, string> = {
   session: '5-hour',
@@ -7,7 +18,7 @@ const LIMIT_LABEL: Record<string, string> = {
   monthly: 'Monthly',
 }
 
-export function parseOllamaUsage(
+function parseOllamaUsage(
   body: unknown,
   now: number,
 ): Pick<ProviderSnapshot, 'plan' | 'remaining' | 'windows' | 'cost' | 'note'> {
@@ -63,3 +74,13 @@ function trimCost(value: string): string {
   if (!Number.isFinite(n)) return value
   return n.toFixed(2)
 }
+
+async function pull(access: ProviderAccess, fetchImpl: FetchLike, now: number): Promise<UsageFields> {
+  const body = await getJson(fetchImpl, 'https://ollama.com/api/usage', {
+    authorization: `Bearer ${access.token}`,
+    accept: 'application/json',
+  })
+  return parseOllamaUsage(body, now)
+}
+
+export const ollamaCloud: ProviderAdapter = { identity, pull }

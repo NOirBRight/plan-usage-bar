@@ -4,7 +4,7 @@ PUB is the GNOME Plan Quota strip. The TypeScript Engine prints a Snapshot; the 
 
 ## Layout
 
-- `src/` — Engine. Public seam is `readSnapshot` and the per-provider `parse*Usage` functions.
+- `src/` — Engine. Public seam is `readSnapshot`, `resolveAccess`, and each Provider adapter's `pull`.
 - `extension/` — GJS shell. `extension.js` is a thin loader; the Strip, Popover and Settings live in `pub-ui.js`.
 - UI 原型不在 main：见分支 `prototype/ui-redesign`（`prototype/redesign.html` 三个方向，已选 A）。
 - `CONTEXT.md` — glossary. `docs/adr/` — decisions.
