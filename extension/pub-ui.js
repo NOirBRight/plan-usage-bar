@@ -81,11 +81,11 @@ const LOGIN = {
     'opencode-go': {
         kind: 'key', page: 'https://opencode.ai/auth', pageLabel: 'opencode.ai',
         hint: 'OpenCode Go API key',
-        cli: 'OpenCode', bin: 'opencode', args: ['auth', 'login'],
+        cli: 'OpenCode Go', bin: 'opencode', args: ['auth', 'login'],
         file: '~/.local/share/opencode/auth.json',
     },
     commandcode: {
-        kind: 'key', page: 'https://commandcode.ai/studio', pageLabel: 'Studio',
+        kind: 'key', page: 'https://commandcode.ai/studio', pageLabel: 'commandcode.ai',
         hint: 'Command Code API key',
         cli: 'Command Code', bin: 'cmd', args: ['login'],
         file: '~/.commandcode/auth.json',
@@ -2200,19 +2200,58 @@ const PubIndicator = GObject.registerClass({
     }
 });
 
+function trayRightIndex() {
+    const children = Main.panel._rightBox.get_children();
+    let at = -1;
+    for (const role of ['quickSettings', 'dateMenu']) {
+        const i = children.indexOf(Main.panel.statusArea[role]?.container);
+        if (i >= 0 && (at < 0 || i < at))
+            at = i;
+    }
+    return at;
+}
+
 export class PubRuntime {
     constructor(extension) {
         this._ext = extension;
         this._indicator = null;
+        this._addedId = 0;
+        this._pinning = false;
     }
 
     enable() {
         this._indicator = new PubIndicator(this._ext);
-        Main.panel.addToStatusArea(this._ext.uuid, this._indicator, 1, 'right');
+        Main.panel.addToStatusArea(this._ext.uuid, this._indicator, trayRightIndex(), 'right');
+        this._pinRight();
+        this._addedId = Main.panel._rightBox.connect('child-added', () => this._pinRight());
     }
 
     disable() {
+        if (this._addedId) {
+            Main.panel._rightBox.disconnect(this._addedId);
+            this._addedId = 0;
+        }
         this._indicator?.destroy();
         this._indicator = null;
+    }
+
+    _pinRight() {
+        if (this._pinning)
+            return;
+        const box = Main.panel._rightBox;
+        const actor = this._indicator?.container;
+        if (!actor || actor.get_parent() !== box)
+            return;
+        const children = box.get_children();
+        const have = children.indexOf(actor);
+        const want = trayRightIndex();
+        if (have < 0 || want < 0)
+            return;
+        const target = have < want ? want - 1 : want;
+        if (have === target)
+            return;
+        this._pinning = true;
+        box.set_child_at_index(actor, target);
+        this._pinning = false;
     }
 }

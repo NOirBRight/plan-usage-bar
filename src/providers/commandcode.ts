@@ -1,5 +1,5 @@
 import type { ProviderAccess } from '../credentials.ts'
-import { getJsonOptional, type FetchLike } from '../http.ts'
+import { getJson, getJsonOptional, type FetchLike } from '../http.ts'
 import type { ProviderIdentity, QuotaWindow } from '../snapshot.ts'
 import { isRecord, remainingFromUsedFraction, resetLabel, isoInstant, toNumber } from '../remaining.ts'
 import type { ProviderAdapter, UsageFields } from './types.ts'
@@ -128,7 +128,6 @@ function parseCommandCodeUsage(
   if (weekly !== undefined) windows.push(weekly)
   if (windows.length === 0 && monthlyCredits === undefined && purchasedCredits === undefined && freeCredits === undefined)
     throw new Error('Command Code usage reply listed no quota')
-  if (windows.length > 0 && !windows.some(window => window.primary)) windows[0]!.primary = true
   const extras: string[] = []
   if (purchasedCredits !== undefined && purchasedCredits > 0)
     extras.push(`${dollars(purchasedCredits)} purchased`)
@@ -178,7 +177,7 @@ async function pull(access: ProviderAccess, fetchImpl: FetchLike, now: number): 
   const whoami = await getJsonOptional(fetchImpl, `${ACCOUNT_API}/alpha/whoami`, auth)
   const id = orgId(whoami)
   const [credits, subscription] = await Promise.all([
-    getJsonOptional(fetchImpl, `${ACCOUNT_API}${query('/alpha/billing/credits', { orgId: id })}`, auth),
+    getJson(fetchImpl, `${ACCOUNT_API}${query('/alpha/billing/credits', { orgId: id })}`, auth),
     getJsonOptional(fetchImpl, `${ACCOUNT_API}${query('/alpha/billing/subscriptions', { orgId: id })}`, auth),
   ])
   const since = periodStart(subscription)

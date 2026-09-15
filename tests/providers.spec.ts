@@ -10,7 +10,7 @@ import { grok } from '../src/providers/grok.ts'
 import { ollamaCloud } from '../src/providers/ollama.ts'
 import { openCodeGo } from '../src/providers/opencode-go.ts'
 import { resetLabel } from '../src/remaining.ts'
-import type { FetchLike } from '../src/http.ts'
+import { HttpError, type FetchLike } from '../src/http.ts'
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), 'fixtures')
 const now = Date.parse('2026-09-14T00:10:38.000Z')
@@ -153,6 +153,20 @@ describe('OpenCode Go pull', () => {
     expect(parsed.windows.find(window => window.primary)?.id).toBe('monthly')
     expect(parsed.remaining).toBe(0.99)
   })
+
+  it('accepts rollingUsage as the 5-hour window alias', async () => {
+    const parsed = await openCodeGo.pull(
+      { token: 'go-key', source: 'pub' },
+      async () => new Response(JSON.stringify({
+        rollingUsage: { percent: 20 },
+        weekly: { percent: 40 },
+        monthlyUsage: { percent: 10 },
+      }), { status: 200, headers: { 'content-type': 'application/json' } }),
+      now,
+    )
+    expect(parsed.windows.map(window => window.id)).toEqual(['session', 'weekly', 'monthly'])
+    expect(parsed.remaining).toBe(0.9)
+  })
 })
 
 describe('Command Code pull', () => {
@@ -171,6 +185,10 @@ describe('Command Code pull', () => {
     const parsed = await commandCode.pull({ token: 'cmd-key', source: 'pub' }, fetchImpl, now)
     expect(seen[0]).toContain('/alpha/whoami')
     expect(seen.some(url => url.includes('/alpha/billing/credits'))).toBe(true)
+    expect(seen.some(url => url.includes('/alpha/billing/subscriptions'))).toBe(true)
+    expect(seen.some(url => url.includes('/alpha/usage/summary'))).toBe(true)
+    expect(seen.findIndex(url => url.includes('/alpha/usage/summary')))
+      .toBeGreaterThan(seen.findIndex(url => url.includes('/alpha/billing/credits')))
     expect(parsed.plan).toBe('GOAT')
     const monthly = parsed.windows.find(window => window.id === 'monthly')
     const weekly = parsed.windows.find(window => window.id === 'weekly')
@@ -197,6 +215,34 @@ describe('Command Code pull', () => {
     const parsed = await commandCode.pull({ token: 'cmd-key', source: 'cli' }, fetchImpl, now)
     expect(parsed.remaining).toBeCloseTo(4.73 / 70, 5)
     expect(parsed.plan).toBe('GOAT')
+  })
+
+  it('still draws Monthly when windowLimits are missing', async () => {
+    const fetchImpl: FetchLike = async (url) => {
+      const href = String(url)
+      if (href.endsWith('/alpha/whoami')) return jsonResponse('commandcode-whoami.json')
+      if (href.includes('/alpha/billing/credits')) {
+        return new Response(JSON.stringify({ credits: { monthlyCredits: 4.73 } }), { status: 200 })
+      }
+      if (href.includes('/alpha/billing/subscriptions')) return jsonResponse('commandcode-subscription.json')
+      return jsonResponse('commandcode-summary.json')
+    }
+    const parsed = await commandCode.pull({ token: 'cmd-key', source: 'pub' }, fetchImpl, now)
+    expect(parsed.windows.map(window => window.id)).toEqual(['monthly'])
+    expect(parsed.remaining).toBeCloseTo(4.73 / 70, 5)
+  })
+
+  it('throws unauthorized when credits answers 401', async () => {
+    const fetchImpl: FetchLike = async (url) => {
+      const href = String(url)
+      if (href.endsWith('/alpha/whoami')) return jsonResponse('commandcode-whoami.json')
+      if (href.includes('/alpha/billing/credits')) return new Response('', { status: 401 })
+      return jsonResponse('commandcode-subscription.json')
+    }
+    await expect(commandCode.pull({ token: 'bad', source: 'pub' }, fetchImpl, now))
+      .rejects.toMatchObject({ status: 401 })
+    await expect(commandCode.pull({ token: 'bad', source: 'pub' }, fetchImpl, now))
+      .rejects.toBeInstanceOf(HttpError)
   })
 })
 

@@ -131,6 +131,24 @@ describe('readSnapshot', () => {
     })])
   })
 
+  it('marks OpenCode Go signed out when no credential is present', async () => {
+    const snapshot = await readSnapshot({
+      settings: {
+        remainingMode: true,
+        providers: [{ id: 'opencode-go', enabled: true, pinned: false }],
+      },
+      store: memoryStore({}),
+      fetch: async () => new Response('no', { status: 500 }),
+      now: () => Date.parse('2026-09-14T00:10:38.000Z'),
+    })
+    expect(snapshot.providers).toEqual([expect.objectContaining({
+      id: 'opencode-go',
+      remaining: null,
+      error: 'signed out',
+      errorKind: 'signed-out',
+    })])
+  })
+
   it('keeps Enabled provider order from settings', async () => {
     const store = memoryStore({
       '/home/user/.claude/.credentials.json': JSON.stringify({
