@@ -112,4 +112,4 @@ PUB_NEST_MODE=ubuntu bash scripts/nested-shell.sh  # Ubuntu Yaru 主题
 
 [GPL-2.0-or-later](LICENSE)
 
-Claude、Codex / OpenAI、Cursor、Grok / xAI、Ollama 的名称与图标归各自所有者，仅用于标识对应服务。本项目与这些公司无关，也未获其认可。
+Claude、Codex / OpenAI、Cursor、Grok / xAI、Ollama、OpenCode Go、Command Code 的名称与图标归各自所有者，仅用于标识对应服务。本项目与这些公司无关，也未获其认可。
