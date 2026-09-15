@@ -29,6 +29,30 @@ function memoryStore(files: Record<string, string>): CredentialStore {
   }
 }
 
+const previousClaude = {
+  fetchedAt: '2026-09-14T00:00:00.000Z',
+  remainingMode: true,
+  providers: [{
+    id: 'claude',
+    name: 'Claude',
+    plan: 'Pro',
+    pinned: true,
+    remaining: 0.98,
+    accent: '#C96442',
+    fetchedAt: '2026-09-14T00:00:00.000Z',
+    usageUrl: 'https://claude.ai/settings/usage',
+    statusUrl: 'https://status.anthropic.com',
+    credentialSource: 'cli' as const,
+    windows: [{
+      id: 'weekly_all',
+      label: 'Weekly',
+      remaining: 0.98,
+      resetLabel: 'Resets in 4d',
+      primary: true,
+    }],
+  }],
+}
+
 describe('readSnapshot', () => {
   it('assembles Enabled providers from injected replies', async () => {
     const store = memoryStore({
@@ -91,6 +115,7 @@ describe('readSnapshot', () => {
       id: 'claude',
       remaining: null,
       error: 'signed out',
+      errorKind: 'signed-out',
       windows: [],
     })])
   })
@@ -130,7 +155,7 @@ describe('readSnapshot', () => {
     expect(snapshot.providers[1]?.pinned).toBe(false)
   })
 
-  it('keeps last good remaining when a refresh fails', async () => {
+  it('keeps last good remaining and the previous fetchedAt when a refresh fails', async () => {
     const store = memoryStore({
       '/home/user/.claude/.credentials.json': JSON.stringify({
         claudeAiOauth: { accessToken: 'claude-token', subscriptionType: 'pro' },
@@ -144,37 +169,85 @@ describe('readSnapshot', () => {
       store,
       fetch: async () => new Response('no', { status: 429 }),
       now: () => Date.parse('2026-09-14T00:10:38.000Z'),
-      previous: {
-        fetchedAt: '2026-09-14T00:00:00.000Z',
-        remainingMode: true,
-        providers: [{
-          id: 'claude',
-          name: 'Claude',
-          plan: 'Pro',
-          pinned: true,
-          remaining: 0.98,
-          accent: '#C96442',
-          fetchedAt: '2026-09-14T00:00:00.000Z',
-          usageUrl: 'https://claude.ai/settings/usage',
-          statusUrl: 'https://status.anthropic.com',
-          credentialSource: 'cli',
-          windows: [{
-            id: 'weekly_all',
-            label: 'Weekly',
-            remaining: 0.98,
-            resetLabel: 'Resets in 4d',
-            primary: true,
-          }],
-        }],
-      },
+      previous: previousClaude,
     })
+    expect(snapshot.fetchedAt).toBe('2026-09-14T00:10:38.000Z')
     expect(snapshot.providers[0]).toEqual(expect.objectContaining({
       remaining: 0.98,
       error: 'HTTP 429',
+      errorKind: 'rate-limit',
       plan: 'Pro',
       credentialSource: 'cli',
+      fetchedAt: '2026-09-14T00:00:00.000Z',
     }))
     expect(snapshot.providers[0]?.windows[0]?.remaining).toBe(0.98)
+  })
+
+  it('treats HTTP 401 as unauthorized last-good, not signed out', async () => {
+    const store = memoryStore({
+      '/home/user/.claude/.credentials.json': JSON.stringify({
+        claudeAiOauth: { accessToken: 'claude-token', subscriptionType: 'pro' },
+      }),
+    })
+    const snapshot = await readSnapshot({
+      settings: {
+        remainingMode: true,
+        providers: [{ id: 'claude', enabled: true, pinned: true }],
+      },
+      store,
+      fetch: async () => new Response('no', { status: 401 }),
+      now: () => Date.parse('2026-09-14T00:10:38.000Z'),
+      previous: previousClaude,
+    })
+    expect(snapshot.providers[0]).toEqual(expect.objectContaining({
+      remaining: 0.98,
+      error: 'HTTP 401',
+      errorKind: 'unauthorized',
+      fetchedAt: '2026-09-14T00:00:00.000Z',
+      credentialSource: 'cli',
+    }))
+  })
+
+  it('keeps credentialSource on a failed pull even without last-good remaining', async () => {
+    const store = memoryStore({
+      '/home/user/.claude/.credentials.json': JSON.stringify({
+        claudeAiOauth: { accessToken: 'claude-token', subscriptionType: 'pro' },
+      }),
+    })
+    const snapshot = await readSnapshot({
+      settings: {
+        remainingMode: true,
+        providers: [{ id: 'claude', enabled: true, pinned: true }],
+      },
+      store,
+      fetch: async () => new Response('no', { status: 401 }),
+      now: () => Date.parse('2026-09-14T00:10:38.000Z'),
+    })
+    expect(snapshot.providers[0]).toEqual(expect.objectContaining({
+      remaining: null,
+      error: 'HTTP 401',
+      errorKind: 'unauthorized',
+      credentialSource: 'cli',
+    }))
+  })
+
+  it('does not keep last good remaining when signed out', async () => {
+    const store = memoryStore({})
+    const snapshot = await readSnapshot({
+      settings: {
+        remainingMode: true,
+        providers: [{ id: 'claude', enabled: true, pinned: true }],
+      },
+      store,
+      fetch: async () => new Response('no', { status: 500 }),
+      now: () => Date.parse('2026-09-14T00:10:38.000Z'),
+      previous: previousClaude,
+    })
+    expect(snapshot.providers[0]).toEqual(expect.objectContaining({
+      remaining: null,
+      error: 'signed out',
+      errorKind: 'signed-out',
+    }))
   })
 
   it('uses the chosen Primary Window for remaining', async () => {

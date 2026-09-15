@@ -1,5 +1,7 @@
 /** Snapshot JSON the GNOME extension reads. Engine-only types. */
 
+import { isRecord } from './remaining.ts'
+
 export interface QuotaWindow {
   id: string
   label: string
@@ -8,6 +10,10 @@ export interface QuotaWindow {
   resetLabel: string
   primary: boolean
 }
+
+export type CredentialSource = 'pub' | 'cli' | 'env'
+
+export type SnapshotErrorKind = 'signed-out' | 'unauthorized' | 'rate-limit' | 'transport'
 
 export interface ProviderSnapshot {
   id: string
@@ -24,7 +30,8 @@ export interface ProviderSnapshot {
   cost?: { today?: string, month?: string }
   note?: string
   error?: string
-  credentialSource?: 'pub' | 'cli'
+  errorKind?: SnapshotErrorKind
+  credentialSource?: CredentialSource
   windows: QuotaWindow[]
 }
 
@@ -66,40 +73,44 @@ export interface ProviderIdentity {
   statusUrl: string
 }
 
-export const IDENTITIES: Record<string, ProviderIdentity> = {
-  claude: {
-    id: 'claude',
-    name: 'Claude',
-    accent: '#C96442',
-    usageUrl: 'https://claude.ai/settings/usage',
-    statusUrl: 'https://status.anthropic.com',
-  },
-  codex: {
-    id: 'codex',
-    name: 'Codex',
-    accent: '#10a37f',
-    usageUrl: 'https://chatgpt.com/#settings',
-    statusUrl: 'https://status.openai.com',
-  },
-  cursor: {
-    id: 'cursor',
-    name: 'Cursor',
-    accent: '#111111',
-    usageUrl: 'https://cursor.com/dashboard',
-    statusUrl: 'https://status.cursor.com',
-  },
-  grok: {
-    id: 'grok',
-    name: 'Grok',
-    accent: '#111111',
-    usageUrl: 'https://grok.com/?_s=usage',
-    statusUrl: 'https://status.x.ai',
-  },
-  'ollama-cloud': {
-    id: 'ollama-cloud',
-    name: 'Ollama Cloud',
-    accent: '#111111',
-    usageUrl: 'https://ollama.com',
-    statusUrl: 'https://status.ollama.com',
-  },
+function cloneDefaultProviders(): ProviderSettings[] {
+  return DEFAULT_SETTINGS.providers.map(row => ({ ...row }))
+}
+
+/** Read-time merge: file wins for known rows, missing defaults append, duplicate ids keep the first. */
+export function parseSettings(value: unknown): PubSettings {
+  if (!isRecord(value)) {
+    return { remainingMode: DEFAULT_SETTINGS.remainingMode, providers: cloneDefaultProviders() }
+  }
+  const raw = value['providers']
+  if (!Array.isArray(raw)) {
+    return { remainingMode: DEFAULT_SETTINGS.remainingMode, providers: cloneDefaultProviders() }
+  }
+  const parsed: ProviderSettings[] = []
+  const seen = new Set<string>()
+  for (const item of raw) {
+    if (!isRecord(item)) continue
+    const id = item['id']
+    if (typeof id !== 'string' || id.length === 0) continue
+    if (seen.has(id)) continue
+    seen.add(id)
+    const primary = item['primary']
+    parsed.push({
+      id,
+      enabled: item['enabled'] !== false,
+      pinned: item['pinned'] === true,
+      ...typeof primary === 'string' && primary.length > 0 ? { primary } : {},
+    })
+  }
+  if (parsed.length === 0) {
+    return { remainingMode: DEFAULT_SETTINGS.remainingMode, providers: cloneDefaultProviders() }
+  }
+  for (const row of DEFAULT_SETTINGS.providers) {
+    if (seen.has(row.id)) continue
+    parsed.push({ ...row })
+  }
+  return {
+    remainingMode: value['remainingMode'] !== false,
+    providers: parsed,
+  }
 }

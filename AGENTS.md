@@ -4,7 +4,7 @@ PUB is the GNOME Plan Quota strip. The TypeScript Engine prints a Snapshot; the 
 
 ## Layout
 
-- `src/` — Engine. Public seam is `readSnapshot` and the per-provider `parse*Usage` functions.
+- `src/` — Engine. Public seam is `readSnapshot`, `resolveAccess`, and each Provider adapter's `pull`.
 - `extension/` — GJS shell. `extension.js` is a thin loader; the Strip, Popover and Settings live in `pub-ui.js`.
 - UI 原型不在 main：见分支 `prototype/ui-redesign`（`prototype/redesign.html` 三个方向，已选 A）。
 - `CONTEXT.md` — glossary. `docs/adr/` — decisions.
@@ -22,13 +22,13 @@ pnpm snapshot
 Enable the extension (GNOME 50) after `pnpm build`:
 
 ```bash
-ln -sfn "$PWD/extension" ~/.local/share/gnome-shell/extensions/pub@noirbright
-gnome-extensions enable pub@noirbright
+ln -sfn "$PWD/extension" ~/.local/share/gnome-shell/extensions/plan-usage-bar@noirbright.github.io
+gnome-extensions enable plan-usage-bar@noirbright.github.io
 ```
 
-不要对 checkout 的 symlink 跑 `gnome-extensions install`，那会清空源码。也不要对 `~/.local/share/gnome-shell/extensions/pub@noirbright` 做 `rm -rf`（若它是指向 checkout 的 symlink，会把源码一起删掉；只删链接用 `rm` 不带 `-r`）。
+不要对 checkout 的 symlink 跑 `gnome-extensions install`，那会清空源码。也不要对 `~/.local/share/gnome-shell/extensions/plan-usage-bar@noirbright.github.io` 做 `rm -rf`（若它是指向 checkout 的 symlink，会把源码一起删掉；只删链接用 `rm` 不带 `-r`）。
 
-当前 Wayland 会话的 gnome-shell **启动时才扫 UUID**。打开「用户扩展」或 `gnome-extensions enable` 都不会让已经在跑的进程认出新的 `pub@noirbright`。DBus `Eval` / `ReloadExtension` 在这台机器上不可用。
+当前 Wayland 会话的 gnome-shell **启动时才扫 UUID**。打开「用户扩展」或 `gnome-extensions enable` 都不会让已经在跑的进程认出新的 `plan-usage-bar@noirbright.github.io`。DBus `Eval` / `ReloadExtension` 在这台机器上不可用。
 
 不注销的测法：Mutter Development Kit 窗口里跑临时 XDG 嵌套 gnome-shell（不动当前 dconf，下次登录不受影响）：
 
@@ -57,7 +57,7 @@ echo 'tap:900,250'   > /tmp/pub-nested/state/pub-probe.cmd   # move:x,y | down |
 `extension.js` 每次启用都从 `$XDG_RUNTIME_DIR/pub-ui/` 导入一份新命名的 `pub-ui.js` 副本，绕开 gnome-shell 的模块缓存（ADR 0007）。改了 `pub-ui.js` 或 `stylesheet.css` 后任选一种：
 
 ```bash
-gnome-extensions disable pub@noirbright; gnome-extensions enable pub@noirbright
+gnome-extensions disable plan-usage-bar@noirbright.github.io; gnome-extensions enable plan-usage-bar@noirbright.github.io
 ```
 
 - 右键 Control Icon →「重新加载」

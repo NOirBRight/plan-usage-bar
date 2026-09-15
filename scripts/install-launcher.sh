@@ -4,7 +4,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-UUID="pub@noirbright"
+UUID="plan-usage-bar@noirbright.github.io"
 APPS="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 DESKTOP="$APPS/pub.desktop"
 
