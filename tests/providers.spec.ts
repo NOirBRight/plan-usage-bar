@@ -91,6 +91,44 @@ describe('Cursor pull', () => {
 })
 
 describe('Grok pull', () => {
+  it('accepts omitted zero usage in a current unified weekly billing period', async () => {
+    const config = {
+      currentPeriod: { type: 'USAGE_PERIOD_TYPE_WEEKLY', start: '2026-09-13T16:26:18Z', end: '2026-09-20T16:26:18Z' },
+      isUnifiedBillingUser: true,
+      billingPeriodStart: '2026-09-13T16:26:18+00:00',
+      billingPeriodEnd: '2026-09-20T16:26:18+00:00',
+      onDemandUsed: { val: 0 },
+    }
+    const pull = (body: unknown) => grok.pull(
+      { token: 'test', source: 'cli' },
+      async () => new Response(JSON.stringify({ config: body })),
+      now,
+    )
+    const parsed = await pull(config)
+    expect(parsed.remaining).toBe(1)
+    expect(parsed.windows[0]?.resetsAt).toBe('2026-09-20T16:26:18.000Z')
+    expect((await pull({ ...config, productUsage: [] })).remaining).toBe(1)
+    expect((await pull({ ...config, creditUsagePercent: 0 })).remaining).toBe(1)
+    for (const invalid of [
+      {},
+      { ...config, creditUsagePercent: null },
+      { ...config, creditUsagePercent: '0' },
+      { ...config, isUnifiedBillingUser: false },
+      { ...config, currentPeriod: undefined },
+      { ...config, currentPeriod: { ...config.currentPeriod, type: 'USAGE_PERIOD_TYPE_MONTHLY' } },
+      { ...config, currentPeriod: { ...config.currentPeriod, start: 'invalid' } },
+      { ...config, currentPeriod: { ...config.currentPeriod, end: 'invalid' } },
+      { ...config, currentPeriod: { ...config.currentPeriod, end: config.currentPeriod.start } },
+      { ...config, currentPeriod: { ...config.currentPeriod, start: config.currentPeriod.end, end: config.currentPeriod.start } },
+      { ...config, productUsage: [{ product: 'GrokBuild', usagePercent: 20 }] },
+      { ...config, productUsage: null },
+      { ...config, billingPeriodStart: config.currentPeriod.end },
+      { ...config, billingPeriodEnd: config.currentPeriod.start },
+    ]) {
+      await expect(pull(invalid)).rejects.toThrow('no creditUsagePercent')
+    }
+  })
+
   it('treats creditUsagePercent 1.0 as 1% used on Weekly', async () => {
     const urls: string[] = []
     const fetchImpl: FetchLike = async (url) => {
