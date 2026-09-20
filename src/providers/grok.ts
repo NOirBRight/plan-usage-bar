@@ -23,7 +23,18 @@ function parseGrokUsage(
   const config = body['config']
   const current = isRecord(config['currentPeriod']) ? config['currentPeriod'] : undefined
   const resetsAt = isoInstant(current?.['end'] ?? config['billingPeriodEnd'])
-  const percent = config['creditUsagePercent']
+  const start = isoInstant(current?.['start'])
+  const end = isoInstant(current?.['end'])
+  const products = config['productUsage']
+  // Zero usage and productUsage are omitted from unified weekly replies after a reset.
+  const canAssumeZeroUsage = config['isUnifiedBillingUser'] === true
+    && current?.['type'] === 'USAGE_PERIOD_TYPE_WEEKLY'
+    && start !== undefined && end !== undefined && Date.parse(start) < Date.parse(end)
+    && (config['billingPeriodStart'] === undefined || isoInstant(config['billingPeriodStart']) === start)
+    && (config['billingPeriodEnd'] === undefined || isoInstant(config['billingPeriodEnd']) === end)
+    && (products === undefined || (Array.isArray(products) && products.length === 0))
+  const percent = config['creditUsagePercent'] === undefined && canAssumeZeroUsage
+    ? 0 : config['creditUsagePercent']
   if (typeof percent !== 'number' || !Number.isFinite(percent)) {
     throw new Error('Grok billing reply has no creditUsagePercent')
   }
