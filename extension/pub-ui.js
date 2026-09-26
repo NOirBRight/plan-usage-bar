@@ -17,24 +17,6 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 const REFRESH_SECONDS = 300;
 const LOGIN_WAIT_SECONDS = 300;
 const PINNED_LIMIT = 6;
-const PROVIDER_NAMES = {
-    claude: 'Claude',
-    codex: 'Codex',
-    cursor: 'Cursor',
-    grok: 'Grok',
-    'ollama-cloud': 'Ollama Cloud',
-    'opencode-go': 'OpenCode Go',
-    commandcode: 'Command Code',
-};
-const USAGE_URLS = {
-    claude: 'https://claude.ai/settings/usage',
-    codex: 'https://chatgpt.com/#settings',
-    cursor: 'https://cursor.com/dashboard',
-    grok: 'https://grok.com/?_s=usage',
-    'ollama-cloud': 'https://ollama.com',
-    'opencode-go': 'https://opencode.ai',
-    commandcode: 'https://commandcode.ai/usage',
-};
 const DEFAULT_SETTINGS = {
     remainingMode: true,
     providers: [
@@ -46,52 +28,6 @@ const DEFAULT_SETTINGS = {
         { id: 'opencode-go', enabled: true, pinned: false },
         { id: 'commandcode', enabled: true, pinned: false },
     ],
-};
-/*
- * How each Provider signs in.
- * cli    — the official CLI owns a browser OAuth flow and writes a file the Engine already reads.
- * cookie — no public auth API; the user copies a browser cookie.
- * key    — an API key created on the provider's site.
- */
-const LOGIN = {
-    claude: {
-        kind: 'cli', cli: 'Claude Code', bin: 'claude', args: ['auth', 'login'],
-        file: '~/.claude/.credentials.json', hint: 'Claude access token',
-        // When the localhost callback is not used, claude.ai shows a code the CLI reads from stdin as "code#state".
-        codeEntry: { hint: '粘贴浏览器页面上的授权码', invalid: /invalid code/iu },
-    },
-    codex: {
-        kind: 'cli', cli: 'Codex CLI', bin: 'codex', args: ['login'],
-        file: '~/.codex/auth.json', hint: 'Codex access token',
-        extra: { key: 'accountId', hint: 'Codex account ID', required: true },
-    },
-    grok: {
-        kind: 'cli', cli: 'Grok CLI', bin: 'grok', args: ['login', '--oauth'],
-        file: '~/.grok/auth.json', hint: 'Grok API key / access token',
-    },
-    cursor: {
-        kind: 'cli', cli: 'Cursor Agent', bin: 'cursor-agent', args: ['login'],
-        file: '~/.config/cursor/auth.json',
-        hint: 'WorkosCursorSessionToken 或 Cursor JWT',
-        extra: { key: 'userId', hint: 'Cursor user ID（token 已含时留空）', required: false },
-        page: 'https://cursor.com/dashboard', pageLabel: 'cursor.com',
-    },
-    'ollama-cloud': {
-        kind: 'key', page: 'https://ollama.com/settings/keys', pageLabel: 'ollama.com',
-        hint: 'Ollama API key',
-    },
-    'opencode-go': {
-        kind: 'key', page: 'https://opencode.ai/auth', pageLabel: 'opencode.ai',
-        hint: 'OpenCode Go API key',
-        cli: 'OpenCode Go', bin: 'opencode', args: ['auth', 'login'],
-        file: '~/.local/share/opencode/auth.json',
-    },
-    commandcode: {
-        kind: 'key', page: 'https://commandcode.ai/studio', pageLabel: 'commandcode.ai',
-        hint: 'Command Code API key',
-        cli: 'Command Code', bin: 'cmd', args: ['login'],
-        file: '~/.commandcode/auth.json',
-    },
 };
 const FILL = { ok: '-st-accent-color', warn: '#e5a50a', crit: '#e01b24', none: 'transparent' };
 
@@ -229,12 +165,23 @@ function credentialComplete(id, credential) {
     return true;
 }
 
-function viaLabel(source, id) {
+function viaLabel(source, cliLabel) {
     if (source === 'pub')
         return 'PUB 保存的凭据';
     if (source === 'env')
         return '通过环境变量';
-    return `通过 ${LOGIN[id]?.cli ?? '官方 CLI'}`;
+    return `通过 ${cliLabel || '官方 CLI'}`;
+}
+
+function codePattern(codeEntry) {
+    if (!codeEntry || typeof codeEntry.invalidPattern !== 'string' || codeEntry.invalidPattern.length === 0)
+        return null;
+    const flags = typeof codeEntry.flags === 'string' ? codeEntry.flags : 'iu';
+    try {
+        return new RegExp(codeEntry.invalidPattern, flags);
+    } catch (_error) {
+        return null;
+    }
 }
 
 function applyPrimary(provider, windowId) {
@@ -291,6 +238,7 @@ const PubIndicator = GObject.registerClass({
         this._strip.set_clip_to_allocation(true);
         this.add_child(this._strip);
         this._credentials = {};
+        this._catalog = {};
         this._schemeId = St.Settings.get().connect('notify::color-scheme', () => {
             this._rebuildStripSoon();
             if (this._popoverOpen)
@@ -341,6 +289,7 @@ const PubIndicator = GObject.registerClass({
         this._contextManager.addMenu(this._context);
         this._rebuildContext();
 
+        this._loadCatalog();
         this._loadSettings();
         this._loadCredentials();
         this._readSnapshotFile();
@@ -752,7 +701,7 @@ const PubIndicator = GObject.registerClass({
             return false;
         if (this._paste)
             return true;
-        return this._cli?.phase === 'waiting' && !!LOGIN[this._cli.id]?.codeEntry && !this._cli.submitted;
+        return this._cli?.phase === 'waiting' && !!this._catalogEntry(this._cli.id)?.codeEntry && !this._cli.submitted;
     }
 
     /** Rebuild unless the user is typing into a credential field. */
@@ -905,7 +854,9 @@ const PubIndicator = GObject.registerClass({
     }
 
     _providerName(id) {
-        return this._snapshot.providers.find(provider => provider.id === id)?.name ?? PROVIDER_NAMES[id] ?? id;
+        return this._snapshot.providers.find(provider => provider.id === id)?.name
+            ?? this._catalogEntry(id)?.name
+            ?? id;
     }
 
     // ---------- Overview ----------
@@ -1186,7 +1137,7 @@ const PubIndicator = GObject.registerClass({
         const source = this._credentialSource(setting.id, live);
         if (source === null)
             return { text: '未登录', bad: true };
-        const via = viaLabel(source, setting.id);
+        const via = viaLabel(source, this._catalogEntry(setting.id)?.cli?.label);
         const plan = live?.plan ? ` · ${live.plan}` : '';
         if (live && hasFetchError(live) && !isSignedOut(live))
             return { text: `已登录 · ${via} · 抓取失败 ${live.error}`, bad: true };
@@ -1312,7 +1263,7 @@ const PubIndicator = GObject.registerClass({
 
         page.add_child(this._sep());
         page.add_child(this._linkRow(`打开 ${name} 用量页`,
-            () => this._openUri(live?.usageUrl ?? USAGE_URLS[id], true)));
+            () => this._openUri(live?.usageUrl ?? this._catalogEntry(id)?.usageUrl, true)));
         return page;
     }
 
@@ -1338,7 +1289,7 @@ const PubIndicator = GObject.registerClass({
     }
 
     _loginCard(id, live) {
-        const spec = LOGIN[id];
+        const spec = this._catalogEntry(id);
         const card = new St.BoxLayout({ vertical: true, style_class: 'pub-card', x_expand: true });
         if (!spec) {
             card.add_child(this._label('这个 Provider 暂不支持在 PUB 里登录。', 'pub-dim'));
@@ -1381,7 +1332,7 @@ const PubIndicator = GObject.registerClass({
                     });
                 }
             } else {
-                card.add_child(describe(`已启动 ${spec.cli}。在浏览器里完成授权后，它会写入 ${spec.file}，PUB 随即刷新。`));
+                card.add_child(describe(`已启动 ${spec.cli?.label ?? '官方 CLI'}。在浏览器里完成授权后，它会写入 ${spec.cli?.file ?? '官方凭据文件'}，PUB 随即刷新。`));
             }
             const row = acts();
             row.add_child(this._label('等待授权…', 'pub-dim pub-small'));
@@ -1398,12 +1349,12 @@ const PubIndicator = GObject.registerClass({
 
         if (paste) {
             card.add_child(title('粘贴凭据'));
-            if (spec.kind === 'key')
-                card.add_child(describe(`在 ${spec.pageLabel} 创建一个 API key，粘贴到下面。`));
-            else if (spec.kind === 'cli' && id === 'cursor')
+            if (spec.credentialKind === 'key' || spec.credentialKind === 'both')
+                card.add_child(describe(`在 ${spec.page?.label ?? '官网'} 创建一个 API key，粘贴到下面。`));
+            else if (spec.credentialKind === 'cli' && id === 'cursor')
                 card.add_child(describe('粘贴 WorkosCursorSessionToken，或 cursor-agent 登录后写入的 JWT。带 userId:: 或 JWT 即可，不必再填 user ID。'));
             else
-                card.add_child(describe(`手动方式，一般用不到：${spec.cli} 登录后 PUB 会自动读取。`));
+                card.add_child(describe(`手动方式，一般用不到：${spec.cli?.label ?? '官方 CLI'} 登录后 PUB 会自动读取。`));
             const token = new St.Entry({ hint_text: spec.hint, can_focus: true, x_expand: true });
             token.add_style_class_name('pub-entry');
             token.clutter_text.set_password_char('●');
@@ -1424,7 +1375,7 @@ const PubIndicator = GObject.registerClass({
             }));
             row.add_child(this._spacer());
             if (spec.page)
-                row.add_child(this._button(`打开 ${spec.pageLabel} ↗`, 'pub-btn-quiet', () => this._openUri(spec.page, false)));
+                row.add_child(this._button(`打开 ${spec.page.label} ↗`, 'pub-btn-quiet', () => this._openUri(spec.page.url, false)));
             card.add_child(row);
             GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
                 if (this._alive && token.get_stage())
@@ -1435,7 +1386,7 @@ const PubIndicator = GObject.registerClass({
         }
 
         const source = this._credentialSource(id, live);
-        const cliPath = spec.bin ? this._findCli(spec.bin) : null;
+        const cliPath = spec.cli ? this._findCli(spec.cli.bin) : null;
         const row = acts();
         if (source !== null) {
             card.add_child(title('已登录', live?.plan));
@@ -1443,7 +1394,7 @@ const PubIndicator = GObject.registerClass({
                 ? '凭据由 PUB 保存在 ~/.config/pub/credentials.json，只有你可读。'
                 : source === 'env'
                     ? '凭据来自环境变量，PUB 不能在这里移除。'
-                    : `凭据来自 ${spec.cli}（${spec.file}）。用量过期后请在官方 CLI 里续期，PUB 不代为刷新。`));
+                    : `凭据来自 ${spec.cli?.label ?? '官方 CLI'}（${spec.cli?.file ?? '官方凭据文件'}）。用量过期后请在官方 CLI 里续期，PUB 不代为刷新。`));
             if (live && hasFetchError(live) && !isSignedOut(live))
                 card.add_child(this._label(`上次抓取失败：${live.error}`, 'pub-small pub-t-crit', { wrap: true }));
             if (source === 'pub') {
@@ -1454,21 +1405,22 @@ const PubIndicator = GObject.registerClass({
             row.add_child(this._button(source === 'pub' ? '换一个凭据…' : '改用粘贴…', 'pub-btn-quiet', () => this._beginPaste(id)));
         } else {
             card.add_child(title('未登录'));
-            if (spec.kind === 'cli') {
+            if (spec.credentialKind === 'cli') {
                 card.add_child(describe(cliPath
-                    ? `${spec.cli} 会打开浏览器完成授权。PUB 只读取它写下的凭据，不需要复制 token。`
-                    : `本机没有找到 ${spec.bin} 命令。安装 ${spec.cli} 后可以在浏览器里登录，也可以手动粘贴。`));
+                    ? `${spec.cli.label} 会打开浏览器完成授权。PUB 只读取它写下的凭据，不需要复制 token。`
+                    : `本机没有找到 ${spec.cli?.bin ?? id} 命令。安装 ${spec.cli?.label ?? '官方 CLI'} 后可以在浏览器里登录，也可以手动粘贴。`));
                 if (cliPath)
                     row.add_child(this._button('在浏览器中登录 ↗', 'pub-btn-sug', () => this._startCliLogin(id)));
             } else {
                 card.add_child(describe(`${this._providerName(id)} 用 API key。在网页里创建后粘贴即可。`));
-                row.add_child(this._button(`打开 ${spec.pageLabel} ↗`, 'pub-btn-sug', () => {
-                    this._openUri(spec.page, false);
-                    this._beginPaste(id);
-                }));
+                if (spec.page)
+                    row.add_child(this._button(`打开 ${spec.page.label} ↗`, 'pub-btn-sug', () => {
+                        this._openUri(spec.page.url, false);
+                        this._beginPaste(id);
+                    }));
             }
             row.add_child(this._button('手动粘贴…', 'pub-btn-quiet', () => this._beginPaste(id)));
-            if (spec.kind === 'key' && cliPath)
+            if (spec.credentialKind !== 'cli' && cliPath)
                 row.add_child(this._button('用 CLI 登录 ↗', 'pub-btn-quiet', () => this._startCliLogin(id)));
             if (this._credentials[id]?.token)
                 row.add_child(this._button('移除凭据', '', () => this._clearCredential(id)));
@@ -1508,12 +1460,13 @@ const PubIndicator = GObject.registerClass({
     }
 
     _startCliLogin(id) {
-        const spec = LOGIN[id];
-        const path = spec ? this._findCli(spec.bin) : null;
+        const spec = this._catalogEntry(id);
+        const cliSpec = spec?.cli ?? null;
+        const path = cliSpec ? this._findCli(cliSpec.bin) : null;
         this._cancelLogin();
         this._paste = null;
-        if (!spec || !path) {
-            this._cli = { id, phase: 'error', message: `没有找到 ${spec?.bin ?? id} 命令。` };
+        if (!cliSpec || !path) {
+            this._cli = { id, phase: 'error', message: `没有找到 ${cliSpec?.bin ?? id} 命令。` };
             this._rebuildMenu();
             return;
         }
@@ -1527,13 +1480,14 @@ const PubIndicator = GObject.registerClass({
             const inherited = GLib.getenv('PATH') ?? '/usr/local/bin:/usr/bin:/bin';
             launcher.setenv('PATH', `${GLib.path_get_dirname(path)}:${inherited}`, true);
             launcher.setenv('NO_COLOR', '1', true);
-            login.proc = launcher.spawnv([path, ...spec.args]);
+            login.proc = launcher.spawnv([path, ...cliSpec.args]);
         } catch (error) {
-            this._cli = { id, phase: 'error', message: `无法启动 ${spec.cli}：${error.message ?? error}` };
+            this._cli = { id, phase: 'error', message: `无法启动 ${cliSpec.label}：${error.message ?? error}` };
             this._rebuildMenu();
             return;
         }
         this._cli = login;
+        const invalidCode = codePattern(spec?.codeEntry);
 
         const stream = new Gio.DataInputStream({ base_stream: login.proc.get_stdout_pipe(), close_base_stream: true });
         const readLine = () => {
@@ -1554,7 +1508,7 @@ const PubIndicator = GObject.registerClass({
                     if (visible && !this._isEditing())
                         this._rebuildMenu();
                 }
-                if (spec.codeEntry?.invalid.test(line) && this._cli === login) {
+                if (invalidCode?.test(line) && this._cli === login) {
                     login.submitted = false;
                     login.message = '授权码无效或已过期。请在浏览器里重新点「Copy code」，粘贴完整内容。';
                     if (visible)
@@ -1587,7 +1541,7 @@ const PubIndicator = GObject.registerClass({
                 this._cli = {
                     id,
                     phase: 'error',
-                    message: detail ? `${spec.cli} 登录没有完成：${detail}` : `${spec.cli} 登录没有完成。`,
+                    message: detail ? `${cliSpec.label} 登录没有完成：${detail}` : `${cliSpec.label} 登录没有完成。`,
                 };
             }
             if (this._popoverOpen)
@@ -1630,7 +1584,7 @@ const PubIndicator = GObject.registerClass({
             login.submitted = true;
             login.message = '';
         } catch (error) {
-            login.message = `无法把授权码交给 ${LOGIN[login.id]?.cli ?? 'CLI'}：${error.message ?? error}`;
+            login.message = `无法把授权码交给 ${this._catalogEntry(login.id)?.cli?.label ?? 'CLI'}：${error.message ?? error}`;
         }
         this._rebuildMenu();
     }
@@ -1654,7 +1608,7 @@ const PubIndicator = GObject.registerClass({
     }
 
     _savePaste(id, tokenText, extraText) {
-        const spec = LOGIN[id];
+        const spec = this._catalogEntry(id);
         const token = tokenText.trim();
         const extra = extraText.trim();
         if (token.length === 0) {
@@ -1874,6 +1828,44 @@ const PubIndicator = GObject.registerClass({
         } catch (_error) {
             // mode best-effort
         }
+    }
+
+    // Provider login facts come from pub-engine catalog; the Shell does not keep its own table.
+    _loadCatalog() {
+        this._catalog = {};
+        const engine = this._ext.dir.get_child('bin').get_child('pub-engine.mjs');
+        const node = GLib.file_test('/usr/bin/node', GLib.FileTest.IS_EXECUTABLE)
+            ? '/usr/bin/node'
+            : GLib.find_program_in_path('node');
+        if (!engine.query_exists(null) || !node) {
+            console.error('PUB: engine missing');
+            return;
+        }
+        try {
+            const proc = Gio.Subprocess.new(
+                [node, engine.get_path(), 'catalog'],
+                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE,
+            );
+            const [, stdout, stderr] = proc.communicate_utf8(null, null);
+            if (!proc.get_successful()) {
+                console.error('PUB: catalog failed', typeof stderr === 'string' ? stderr.trim() : '');
+                return;
+            }
+            const parsed = JSON.parse(stdout);
+            if (!Array.isArray(parsed))
+                return;
+            for (const entry of parsed) {
+                if (!entry || typeof entry.id !== 'string' || entry.id.length === 0)
+                    continue;
+                this._catalog[entry.id] = entry;
+            }
+        } catch (error) {
+            console.error('PUB: catalog failed', error);
+        }
+    }
+
+    _catalogEntry(id) {
+        return this._catalog?.[id] ?? null;
     }
 
     // Settings edits go through pub-engine; the Shell does not write settings.json.

@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { runCatalogCommand } from './catalog.ts'
 import { loadSettings, readSnapshot } from './engine.ts'
 import { defaultStore, pubConfigDir } from './credentials.ts'
 import { runSettingsCommand } from './settings.ts'
@@ -21,8 +22,12 @@ async function main(): Promise<void> {
     await runSettingsCommand(args.slice(1))
     return
   }
-  // catalog and credentials dispatch from here.
-  console.error('Usage: pub-engine snapshot [--out FILE] | pub-engine --version | pub-engine settings | pub-engine settings set …')
+  if (command === 'catalog') {
+    runCatalogCommand()
+    return
+  }
+  // credentials dispatch from here.
+  console.error('Usage: pub-engine snapshot [--out FILE] | pub-engine catalog | pub-engine --version | pub-engine settings | pub-engine settings set …')
   process.exitCode = 1
 }
 
