@@ -1,5 +1,8 @@
+import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { stdin } from 'node:process'
+import { catalogEntries } from './catalog.ts'
 import { isRecord } from './remaining.ts'
 
 export interface CredentialStore {
@@ -275,4 +278,225 @@ export async function resolveAccess(
     return await commandCodeFromCli(store) ?? envToken(store, ['COMMAND_CODE_API_KEY', 'COMMANDCODE_API_KEY'])
   }
   return undefined
+}
+
+const CREDENTIALS_USAGE = 'Usage: pub-engine credentials set <id> [--account-id <value>] [--user-id <value>] | pub-engine credentials clear <id>'
+
+export async function runCredentialsCommand(args: readonly string[]): Promise<void> {
+  const [verb, ...rest] = args
+  if (verb === 'set') {
+    await runSet(rest)
+    return
+  }
+  if (verb === 'clear') {
+    await runClear(rest)
+    return
+  }
+  fail(CREDENTIALS_USAGE)
+}
+
+async function runSet(args: readonly string[]): Promise<void> {
+  // Drain stdin before rejecting so a Shell pipe is not left unread.
+  const secret = (await readStdin()).trim()
+  const parsed = parseSetArgs(args)
+  if (typeof parsed === 'string') {
+    fail(parsed)
+    return
+  }
+  const provider = providerExtra(parsed.id)
+  if (provider === undefined) {
+    fail(`Unknown provider: ${parsed.id}`)
+    return
+  }
+  const extra = validateExtra(parsed.id, provider, parsed.fields)
+  if (typeof extra === 'string') {
+    fail(extra)
+    return
+  }
+  if (secret.length === 0) {
+    fail('Secret is empty')
+    return
+  }
+  const path = credentialsPath()
+  const current = await readCredentialDocument(path)
+  if (current === undefined) {
+    fail('credentials.json is invalid')
+    return
+  }
+  const entry: Record<string, string> = { token: secret }
+  if (extra !== undefined)
+    entry[extra.key] = extra.value
+  await writePrivate(path, formatDocument({ ...current, [parsed.id]: entry }))
+  process.stdout.write(acknowledge(parsed.id))
+}
+
+async function runClear(args: readonly string[]): Promise<void> {
+  if (args.length !== 1 || args[0] === undefined || args[0].length === 0 || args[0].startsWith('-')) {
+    fail(CREDENTIALS_USAGE)
+    return
+  }
+  const id = args[0]
+  const path = credentialsPath()
+  let text: string
+  try {
+    text = await readFile(path, 'utf8')
+  } catch (error) {
+    if (isNodeErrno(error) && error.code === 'ENOENT') {
+      process.stdout.write(acknowledge(id))
+      return
+    }
+    throw error
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text) as unknown
+  } catch {
+    fail('credentials.json is invalid')
+    return
+  }
+  if (!isRecord(parsed)) {
+    fail('credentials.json is invalid')
+    return
+  }
+  if (!Object.hasOwn(parsed, id)) {
+    process.stdout.write(acknowledge(id))
+    return
+  }
+  const next = { ...parsed }
+  delete next[id]
+  await writePrivate(path, formatDocument(next))
+  process.stdout.write(acknowledge(id))
+}
+
+interface ParsedSet {
+  id: string
+  fields: Map<string, string>
+}
+
+function parseSetArgs(args: readonly string[]): ParsedSet | string {
+  const [id, ...rest] = args
+  if (id === undefined || id.length === 0 || id.startsWith('-'))
+    return CREDENTIALS_USAGE
+  const known = knownFlags()
+  const fields = new Map<string, string>()
+  let index = 0
+  while (index < rest.length) {
+    const flag = rest[index]
+    if (flag === undefined || !flag.startsWith('--'))
+      return CREDENTIALS_USAGE
+    if (!known.has(flag))
+      return `Unknown flag: ${flag}`
+    const value = rest[index + 1]
+    if (value === undefined || value.startsWith('-'))
+      return CREDENTIALS_USAGE
+    if (fields.has(flag))
+      return CREDENTIALS_USAGE
+    fields.set(flag, value)
+    index += 2
+  }
+  return { id, fields }
+}
+
+interface ProviderExtra {
+  flag?: string
+  key?: string
+  required: boolean
+}
+
+function providerExtra(id: string): ProviderExtra | undefined {
+  const entry = catalogEntries().find(row => row.id === id)
+  if (entry === undefined)
+    return undefined
+  if (entry.extra === undefined)
+    return { required: false }
+  return {
+    flag: flagFor(entry.extra.key),
+    key: entry.extra.key,
+    required: entry.extra.required,
+  }
+}
+
+function validateExtra(
+  id: string,
+  provider: ProviderExtra,
+  fields: Map<string, string>,
+): { key: string, value: string } | undefined | string {
+  let extra: { key: string, value: string } | undefined
+  for (const [flag, value] of fields) {
+    if (provider.flag === undefined || flag !== provider.flag || provider.key === undefined)
+      return `${flag} is not valid for ${id}`
+    const trimmed = value.trim()
+    if (trimmed.length === 0)
+      return provider.required ? `Missing required ${flag}` : `${flag} must not be blank`
+    extra = { key: provider.key, value: trimmed }
+  }
+  if (provider.required && extra === undefined && provider.flag !== undefined)
+    return `Missing required ${provider.flag}`
+  return extra
+}
+
+function knownFlags(): Map<string, string> {
+  const flags = new Map<string, string>()
+  for (const entry of catalogEntries()) {
+    if (entry.extra === undefined)
+      continue
+    flags.set(flagFor(entry.extra.key), entry.extra.key)
+  }
+  return flags
+}
+
+function flagFor(key: string): string {
+  return `--${key.replace(/[A-Z]/gu, letter => `-${letter.toLowerCase()}`)}`
+}
+
+function credentialsPath(): string {
+  return join(pubConfigDir(defaultStore()), 'credentials.json')
+}
+
+async function readCredentialDocument(path: string): Promise<Record<string, unknown> | undefined> {
+  try {
+    const parsed = JSON.parse(await readFile(path, 'utf8')) as unknown
+    return isRecord(parsed) ? parsed : undefined
+  } catch (error) {
+    if (isNodeErrno(error) && error.code === 'ENOENT')
+      return {}
+    if (error instanceof SyntaxError)
+      return undefined
+    throw error
+  }
+}
+
+function acknowledge(id: string): string {
+  return `${JSON.stringify({ id }, null, 2)}\n`
+}
+
+function formatDocument(value: unknown): string {
+  return `${JSON.stringify(value, null, 2)}\n`
+}
+
+async function writePrivate(path: string, json: string): Promise<void> {
+  await mkdir(dirname(path), { recursive: true })
+  const tmp = `${path}.${String(process.pid)}.tmp`
+  try {
+    await writeFile(tmp, json, { mode: 0o600 })
+    // writeFile applies the umask; chmod keeps the mode user-only.
+    await chmod(tmp, 0o600)
+    await rename(tmp, path)
+  } catch (error) {
+    await unlink(tmp).catch(() => undefined)
+    throw error
+  }
+}
+
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = []
+  for await (const chunk of stdin) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+  }
+  return Buffer.concat(chunks).toString('utf8')
+}
+
+function fail(message: string): void {
+  console.error(message)
+  process.exitCode = 1
 }
