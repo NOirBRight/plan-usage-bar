@@ -1,6 +1,6 @@
 import type { ProviderAccess } from '../credentials.ts'
 import { getJson, type FetchLike } from '../http.ts'
-import type { ProviderIdentity, ProviderSnapshot, QuotaWindow } from '../snapshot.ts'
+import type { ProviderIdentity, ProviderSnapshot, WindowReport } from '../snapshot.ts'
 import { isRecord, remainingFromUsedFraction, resetLabel, isoInstant } from '../remaining.ts'
 import type { ProviderAdapter, UsageFields } from './types.ts'
 
@@ -35,7 +35,7 @@ function parseWindow(
   id: string,
   label: string,
   now: number,
-): QuotaWindow | undefined {
+): WindowReport | undefined {
   if (!isRecord(value)) return undefined
   const status = value['status']
   if (status !== undefined && status !== 'ok' && status !== 'rate-limited') return undefined
@@ -55,12 +55,12 @@ function parseWindow(
 function parseOpenCodeGoUsage(
   body: unknown,
   now: number,
-): Pick<ProviderSnapshot, 'remaining' | 'windows'> {
+): Pick<ProviderSnapshot, 'remaining'> & { windows: WindowReport[] } {
   const root = isRecord(body) && isRecord(body['usage']) ? body['usage'] : body
   if (!isRecord(root)) throw new Error('OpenCode Go usage reply has no windows')
-  const windows: QuotaWindow[] = []
+  const windows: WindowReport[] = []
   for (const spec of WINDOW_IDS) {
-    let parsed: QuotaWindow | undefined
+    let parsed: WindowReport | undefined
     for (const key of spec.keys) {
       parsed = parseWindow(root[key], spec.id, spec.label, now)
       if (parsed !== undefined) break

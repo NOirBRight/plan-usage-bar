@@ -2,16 +2,31 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { loadSettings, readSnapshot } from './engine.ts'
 import { defaultStore, pubConfigDir } from './credentials.ts'
-import type { Snapshot } from './snapshot.ts'
+import { SCHEMA_VERSION, type Snapshot } from './snapshot.ts'
+import packageJson from '../package.json' with { type: 'json' }
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2)
   const command = args[0] ?? 'snapshot'
-  if (command !== 'snapshot') {
-    console.error('Usage: pub-engine snapshot [--out FILE]')
-    process.exitCode = 1
+  if (command === '--version' || command === 'version') {
+    printVersion()
     return
   }
+  if (command === 'snapshot') {
+    await writeSnapshot(args.slice(1))
+    return
+  }
+  // settings, catalog, and credentials dispatch from here.
+  console.error('Usage: pub-engine snapshot [--out FILE] | pub-engine --version')
+  process.exitCode = 1
+}
+
+function printVersion(): void {
+  const json = `${JSON.stringify({ version: packageJson.version, schemaVersion: SCHEMA_VERSION }, null, 2)}\n`
+  process.stdout.write(json)
+}
+
+async function writeSnapshot(args: string[]): Promise<void> {
   const outFlag = args.indexOf('--out')
   const store = defaultStore()
   const configDir = pubConfigDir(store)
