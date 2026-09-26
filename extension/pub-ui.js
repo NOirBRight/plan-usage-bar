@@ -155,6 +155,10 @@ function canonicalizeCredential(item, id) {
     return credential;
 }
 
+function credentialFlag(key) {
+    return `--${String(key).replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`)}`;
+}
+
 function credentialComplete(id, credential) {
     if (!credential || typeof credential.token !== 'string' || credential.token.length === 0)
         return false;
@@ -1630,16 +1634,31 @@ const PubIndicator = GObject.registerClass({
             this._rebuildMenu();
             return;
         }
-        this._credentials[id] = credential;
-        this._writeCredentials();
+        const args = ['credentials', 'set', id];
+        if (spec?.extra) {
+            const value = credential[spec.extra.key];
+            if (typeof value === 'string' && value.length > 0)
+                args.push(credentialFlag(spec.extra.key), value);
+        }
+        const saved = this._credentialsCommand(args, credential.token);
+        if (!saved.ok) {
+            this._paste = { id, message: saved.detail.length > 0 ? saved.detail : '无法保存凭据。' };
+            this._rebuildMenu();
+            return;
+        }
+        this._loadCredentials();
         this._paste = null;
         this.requestSnapshot('manual');
         this._rebuildMenu();
     }
 
     _clearCredential(id) {
-        delete this._credentials[id];
-        this._writeCredentials();
+        const cleared = this._credentialsCommand(['credentials', 'clear', id], null);
+        if (!cleared.ok) {
+            this._rebuildMenu();
+            return;
+        }
+        this._loadCredentials();
         this.requestSnapshot('manual');
         this._rebuildMenu();
     }
@@ -1807,29 +1826,6 @@ const PubIndicator = GObject.registerClass({
         }
     }
 
-    _writeCredentials() {
-        const dir = Gio.File.new_for_path(GLib.build_filenamev([GLib.get_user_config_dir(), 'pub']));
-        try {
-            dir.make_directory_with_parents(null);
-        } catch (_error) {
-            // already exists
-        }
-        const file = Gio.File.new_for_path(this._credentialsPath());
-        const body = JSON.stringify(this._credentials, null, 2);
-        file.replace_contents(
-            body,
-            null,
-            false,
-            Gio.FileCreateFlags.PRIVATE | Gio.FileCreateFlags.REPLACE_DESTINATION,
-            null,
-        );
-        try {
-            file.set_attribute_uint32('unix::mode', 0o600, Gio.FileQueryInfoFlags.NONE, null);
-        } catch (_error) {
-            // mode best-effort
-        }
-    }
-
     // Provider login facts come from pub-engine catalog; the Shell does not keep its own table.
     _loadCatalog() {
         this._catalog = {};
@@ -1866,6 +1862,34 @@ const PubIndicator = GObject.registerClass({
 
     _catalogEntry(id) {
         return this._catalog?.[id] ?? null;
+    }
+
+    // Paste and logout go through pub-engine. The secret is stdin, never argv or a log line.
+    _credentialsCommand(args, stdin) {
+        const engine = this._ext.dir.get_child('bin').get_child('pub-engine.mjs');
+        const node = GLib.file_test('/usr/bin/node', GLib.FileTest.IS_EXECUTABLE)
+            ? '/usr/bin/node'
+            : GLib.find_program_in_path('node');
+        if (!engine.query_exists(null) || !node) {
+            console.error('PUB: engine missing');
+            return { ok: false, detail: '' };
+        }
+        try {
+            let flags = Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE;
+            if (stdin !== null)
+                flags |= Gio.SubprocessFlags.STDIN_PIPE;
+            const proc = Gio.Subprocess.new([node, engine.get_path(), ...args], flags);
+            const [, , stderr] = proc.communicate_utf8(stdin, null);
+            if (!proc.get_successful()) {
+                const detail = typeof stderr === 'string' ? stderr.trim() : '';
+                console.error('PUB: credentials command failed', detail);
+                return { ok: false, detail };
+            }
+            return { ok: true, detail: '' };
+        } catch (error) {
+            console.error('PUB: credentials command failed', error.message ?? error);
+            return { ok: false, detail: '' };
+        }
     }
 
     // Settings edits go through pub-engine; the Shell does not write settings.json.
