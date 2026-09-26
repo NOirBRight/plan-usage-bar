@@ -76,6 +76,14 @@ _Avoid_: quit process（PUB 的可见外壳是扩展，不是独立 GUI 进程�
 某一时刻全部 Enabled Provider 的 Plan Quota 画面。Strip 和 Popover 只读 Snapshot，不直接找各家接口。
 _Avoid_: payload, usage JSON（实现用语）
 
+**Engine**:
+无界面的 `pub-engine`：拉 Plan Quota 写 Snapshot，也管 Provider 目录、settings 和 credentials 的读写。它是 Shell 与 PUB 之间唯一的契约，Snapshot 带 `schemaVersion`。
+_Avoid_: backend, daemon（它不常驻，由 Shell 按需 spawn）
+
+**Shell**:
+把 Snapshot 画出来、并通过 Engine CLI 改设置的可见外壳。GNOME 扩展是一个；`pub-am01s`（Omarchy + AM01S 副屏）是另一个，在自己的仓库。Shell 不自己拼 settings/credentials 的 JSON。
+_Avoid_: frontend, client, UI（泛指时可以）
+
 **Ollama Cloud**:
 Ollama 托管套餐，是 Provider。本机 `ollama` 进程不是。
 _Avoid_: Ollama（单独使用时会把本地和 Cloud 混在一起）
