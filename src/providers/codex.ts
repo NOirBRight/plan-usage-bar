@@ -1,6 +1,6 @@
 import type { ProviderAccess } from '../credentials.ts'
 import { getJson, type FetchLike } from '../http.ts'
-import type { ProviderIdentity, ProviderSnapshot, QuotaWindow } from '../snapshot.ts'
+import type { ProviderIdentity, ProviderSnapshot, WindowReport } from '../snapshot.ts'
 import { isRecord, remainingFromUsedPercent, resetLabel, isoInstant } from '../remaining.ts'
 import type { ProviderAdapter, UsageFields } from './types.ts'
 
@@ -15,9 +15,9 @@ export const identity: ProviderIdentity = {
 function parseCodexUsage(
   body: unknown,
   now: number,
-): Pick<ProviderSnapshot, 'plan' | 'remaining' | 'windows'> {
+): Pick<ProviderSnapshot, 'plan' | 'remaining'> & { windows: WindowReport[] } {
   if (!isRecord(body)) throw new Error('Codex usage reply is not an object')
-  const windows: QuotaWindow[] = []
+  const windows: WindowReport[] = []
   appendLimit(windows, body['rate_limit'], undefined, now)
   const additional = body['additional_rate_limits']
   if (Array.isArray(additional)) {
@@ -39,7 +39,7 @@ function parseCodexUsage(
 }
 
 function appendLimit(
-  windows: QuotaWindow[],
+  windows: WindowReport[],
   value: unknown,
   prefix: string | undefined,
   now: number,
@@ -52,7 +52,7 @@ function appendLimit(
   }
 }
 
-function parseWindow(value: unknown, prefix: string | undefined, now: number): QuotaWindow | undefined {
+function parseWindow(value: unknown, prefix: string | undefined, now: number): WindowReport | undefined {
   if (!isRecord(value)) return undefined
   const usedPercent = value['used_percent']
   const windowSeconds = value['limit_window_seconds']

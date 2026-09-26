@@ -13,3 +13,16 @@ AM01S 副屏版（Omarchy/Hyprland 上的 Quickshell 插件）只适用于那块
 - Snapshot 带 `schemaVersion`，并为窄屏 Shell 带短名：Provider 的 `shortName`（OpenCode Go → OpenCode）、Quota Window 的 `shortLabel`（Cursor Models → Cursor）。Shell 遇到不认识的版本就显示「需要更新」，不去猜。
 - 每次发版把构建好的 `pub-engine.mjs`（单文件、只依赖 `node:`）作为 GitHub Release 附件。其他仓库按 tag 下载固定版本，不做 git 依赖。
 - GNOME 扩展也改走这些命令，`pub-ui.js` 里的 `LOGIN` 表和 JSON 读写搬进 Engine。
+
+## 契约：errorKind
+
+上面的决定不改。Snapshot 里 Provider 抓取失败时带可选的 `errorKind`，只有这四个值：
+
+- `signed-out`：没有可用凭据（`error` 为 `signed out`）。这不是抓取失败。Shell 可以藏起该 Provider，例如 AM01S 的 Meter Bank。
+- `unauthorized`：凭据被拒绝（HTTP 401 或 403）。不是 signed-out。若盘上还有上次成功的 Remaining，Engine 会留着它。
+- `rate-limit`：HTTP 429。
+- `transport`：其余 HTTP 状态、网络错误，以及无法解析的回复。
+
+## 版本查询
+
+`pub-engine --version` 和 `pub-engine version` 在 stdout 打印 JSON：`version` 是 Engine 的 package 版本，`schemaVersion` 是它写出的 Snapshot 版本（当前为 1）。成功时退出码 0。

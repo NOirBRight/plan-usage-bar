@@ -1,6 +1,6 @@
 import type { ProviderAccess } from '../credentials.ts'
 import { getJson, type FetchLike } from '../http.ts'
-import type { ProviderIdentity, ProviderSnapshot, QuotaWindow } from '../snapshot.ts'
+import type { ProviderIdentity, ProviderSnapshot, WindowReport } from '../snapshot.ts'
 import { isRecord, remainingFromUsedPercent, resetLabel, isoInstant, toNumber } from '../remaining.ts'
 import type { ProviderAdapter, UsageFields } from './types.ts'
 
@@ -15,7 +15,7 @@ export const identity: ProviderIdentity = {
 function parseCursorUsage(
   body: unknown,
   now: number,
-): Pick<ProviderSnapshot, 'plan' | 'remaining' | 'windows' | 'extraNote'> {
+): Pick<ProviderSnapshot, 'plan' | 'remaining' | 'extraNote'> & { windows: WindowReport[] } {
   if (!isRecord(body) || !isRecord(body['individualUsage'])) {
     throw new Error('Cursor usage-summary has no individualUsage')
   }
@@ -24,7 +24,7 @@ function parseCursorUsage(
   const onDemand = isRecord(individual['onDemand']) ? individual['onDemand'] : undefined
   const resetsAt = isoInstant(body['billingCycleEnd'])
   const reset = resetLabel(resetsAt, now)
-  const windows: QuotaWindow[] = []
+  const windows: WindowReport[] = []
   const auto = plan === undefined ? undefined : toNumber(plan['autoPercentUsed'])
   const api = plan === undefined ? undefined : toNumber(plan['apiPercentUsed'])
   const total = plan === undefined ? undefined : toNumber(plan['totalPercentUsed'])

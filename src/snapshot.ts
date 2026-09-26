@@ -5,19 +5,57 @@ import { isRecord } from './remaining.ts'
 export interface QuotaWindow {
   id: string
   label: string
+  shortLabel: string
   remaining: number | null
   resetsAt?: string
   resetLabel: string
   primary: boolean
 }
 
+/** Quota Window fields a Provider adapter reports. The Snapshot writer adds shortLabel. */
+export type WindowReport = Omit<QuotaWindow, 'shortLabel'>
+
+const SHORT_LABELS: Record<string, string> = {
+  'Cursor Models': 'Cursor',
+  'Other Models': 'Other',
+}
+
+/** Narrow-screen Quota Window label. Unlisted labels are already short enough. */
+export function shortLabelFor(label: string): string {
+  return SHORT_LABELS[label] ?? label
+}
+
+export function contractWindow(window: WindowReport): QuotaWindow {
+  return {
+    id: window.id,
+    label: window.label,
+    shortLabel: shortLabelFor(window.label),
+    remaining: window.remaining,
+    ...window.resetsAt === undefined ? {} : { resetsAt: window.resetsAt },
+    resetLabel: window.resetLabel,
+    primary: window.primary,
+  }
+}
+
 export type CredentialSource = 'pub' | 'cli' | 'env'
 
 export type SnapshotErrorKind = 'signed-out' | 'unauthorized' | 'rate-limit' | 'transport'
 
+const SHORT_NAMES: Record<string, string> = {
+  'OpenCode Go': 'OpenCode',
+  'Command Code': 'Cmd Code',
+  'Ollama Cloud': 'Ollama',
+}
+
+/** Narrow-screen Provider name. Unlisted names are already short enough. */
+export function shortNameFor(name: string): string {
+  return SHORT_NAMES[name] ?? name
+}
+
 export interface ProviderSnapshot {
   id: string
   name: string
+  shortName: string
   plan?: string
   pinned: boolean
   remaining: number | null
@@ -35,7 +73,11 @@ export interface ProviderSnapshot {
   windows: QuotaWindow[]
 }
 
+/** Snapshot JSON written for every Shell. Unknown versions mean "needs update". */
+export const SCHEMA_VERSION = 1
+
 export interface Snapshot {
+  schemaVersion: number
   fetchedAt: string
   remainingMode: boolean
   providers: ProviderSnapshot[]

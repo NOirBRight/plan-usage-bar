@@ -30,11 +30,13 @@ function memoryStore(files: Record<string, string>): CredentialStore {
 }
 
 const previousClaude = {
+  schemaVersion: 1,
   fetchedAt: '2026-09-14T00:00:00.000Z',
   remainingMode: true,
   providers: [{
     id: 'claude',
     name: 'Claude',
+    shortName: 'Claude',
     plan: 'Pro',
     pinned: true,
     remaining: 0.98,
@@ -46,6 +48,7 @@ const previousClaude = {
     windows: [{
       id: 'weekly_all',
       label: 'Weekly',
+      shortLabel: 'Weekly',
       remaining: 0.98,
       resetLabel: 'Resets in 4d',
       primary: true,
@@ -348,11 +351,13 @@ describe('readSnapshot', () => {
       }),
     })
     const previous = {
+      schemaVersion: 1,
       fetchedAt: '2026-09-14T00:00:00.000Z',
       remainingMode: true,
       providers: [{
         id: 'commandcode',
         name: 'Command Code',
+        shortName: 'Cmd Code',
         plan: 'GOAT',
         pinned: false,
         remaining: 4.73 / 70,
@@ -364,6 +369,7 @@ describe('readSnapshot', () => {
         windows: [{
           id: 'monthly',
           label: 'Monthly',
+          shortLabel: 'Monthly',
           remaining: 4.73 / 70,
           resetLabel: '',
           primary: true,
@@ -394,6 +400,7 @@ describe('applyPrimary', () => {
   const provider = {
     id: 'cursor',
     name: 'Cursor',
+    shortName: 'Cursor',
     pinned: true,
     remaining: 0.29,
     accent: '#111111',
@@ -401,8 +408,8 @@ describe('applyPrimary', () => {
     usageUrl: 'https://cursor.com/dashboard',
     statusUrl: 'https://status.cursor.com',
     windows: [
-      { id: 'cursor-models', label: 'Cursor Models', remaining: 0.34, resetLabel: '', primary: false },
-      { id: 'other-models', label: 'Other Models', remaining: 0, resetLabel: '', primary: false },
+      { id: 'cursor-models', label: 'Cursor Models', shortLabel: 'Cursor', remaining: 0.34, resetLabel: '', primary: false },
+      { id: 'other-models', label: 'Other Models', shortLabel: 'Other', remaining: 0, resetLabel: '', primary: false },
     ],
   }
 
