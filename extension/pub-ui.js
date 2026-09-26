@@ -1249,10 +1249,15 @@ const PubIndicator = GObject.registerClass({
             // menu already gone
         }
         if (commit && drag.to !== drag.from) {
-            const list = this._settings.providers;
-            const [row] = list.splice(drag.from, 1);
-            list.splice(drag.to, 0, row);
-            this._writeSettings();
+            const ids = this._settings.providers.map(row => row.id);
+            const [moved] = ids.splice(drag.from, 1);
+            ids.splice(drag.to, 0, moved);
+            const known = new Set(DEFAULT_SETTINGS.providers.map(row => row.id));
+            const order = ids.filter(id => known.has(id));
+            if (!this._settingsSet(['order', ...order])) {
+                this._rebuildMenu();
+                return;
+            }
             this._applyProviderOrder();
             this._rebuildStripSoon();
             this._rebuildMenu();
@@ -1688,9 +1693,9 @@ const PubIndicator = GObject.registerClass({
     // ---------- settings actions ----------
 
     _setMode(remainingMode) {
-        this._settings.remainingMode = remainingMode;
-        this._snapshot.remainingMode = remainingMode;
-        this._writeSettings();
+        if (!this._settingsSet(['remaining-mode', remainingMode ? 'true' : 'false']))
+            return;
+        this._snapshot.remainingMode = this._settings.remainingMode;
         this._rebuildStripSoon();
         this._rebuildMenu();
     }
@@ -1699,13 +1704,12 @@ const PubIndicator = GObject.registerClass({
         const setting = this._settings.providers.find(item => item.id === id);
         if (!setting)
             return;
-        setting.enabled = enabled;
-        if (!enabled) {
-            setting.pinned = false;
-            if (this._cli?.id === id)
-                this._cancelLogin();
+        if (!this._settingsSet(['enabled', id, enabled ? 'true' : 'false'])) {
+            this._rebuildMenu();
+            return;
         }
-        this._writeSettings();
+        if (!enabled && this._cli?.id === id)
+            this._cancelLogin();
         this._readSnapshotFile();
         this._rebuildStripSoon();
         this._rebuildMenuLater();
@@ -1720,11 +1724,14 @@ const PubIndicator = GObject.registerClass({
             if (count >= PINNED_LIMIT)
                 return;
         }
-        setting.pinned = pinned;
+        if (!this._settingsSet(['pinned', id, pinned ? 'true' : 'false'])) {
+            this._rebuildMenu();
+            return;
+        }
         const live = this._snapshot.providers.find(provider => provider.id === id);
-        if (live)
-            live.pinned = pinned;
-        this._writeSettings();
+        const row = this._settings.providers.find(item => item.id === id);
+        if (live && row)
+            live.pinned = row.pinned === true;
         this._rebuildStripSoon();
         if (immediate)
             this._rebuildMenu();
@@ -1736,11 +1743,11 @@ const PubIndicator = GObject.registerClass({
         const setting = this._settings.providers.find(item => item.id === id);
         if (!setting)
             return;
-        if (windowId === null)
-            delete setting.primary;
-        else
-            setting.primary = windowId;
-        this._writeSettings();
+        const args = windowId === null
+            ? ['primary', id, '--clear']
+            : ['primary', id, windowId];
+        if (!this._settingsSet(args))
+            return;
         this._readSnapshotFile();
         this._rebuildStripSoon();
         this._rebuildMenu();
@@ -1869,21 +1876,32 @@ const PubIndicator = GObject.registerClass({
         }
     }
 
-    _writeSettings() {
-        const dir = Gio.File.new_for_path(GLib.build_filenamev([GLib.get_user_config_dir(), 'pub']));
-        try {
-            dir.make_directory_with_parents(null);
-        } catch (_error) {
-            // already exists
+    // Settings edits go through pub-engine; the Shell does not write settings.json.
+    _settingsSet(args) {
+        const engine = this._ext.dir.get_child('bin').get_child('pub-engine.mjs');
+        const node = GLib.file_test('/usr/bin/node', GLib.FileTest.IS_EXECUTABLE)
+            ? '/usr/bin/node'
+            : GLib.find_program_in_path('node');
+        if (!engine.query_exists(null) || !node) {
+            console.error('PUB: engine missing');
+            return false;
         }
-        const file = Gio.File.new_for_path(this._settingsPath());
-        file.replace_contents(
-            JSON.stringify(this._settings, null, 2),
-            null,
-            false,
-            Gio.FileCreateFlags.NONE,
-            null,
-        );
+        try {
+            const proc = Gio.Subprocess.new(
+                [node, engine.get_path(), 'settings', 'set', ...args],
+                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE,
+            );
+            const [, , stderr] = proc.communicate_utf8(null, null);
+            if (!proc.get_successful()) {
+                console.error('PUB: settings set failed', typeof stderr === 'string' ? stderr.trim() : '');
+                return false;
+            }
+        } catch (error) {
+            console.error('PUB: settings set failed', error);
+            return false;
+        }
+        this._loadSettings();
+        return true;
     }
 
     _readSnapshotFile() {

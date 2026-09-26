@@ -2,16 +2,25 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { loadSettings, readSnapshot } from './engine.ts'
 import { defaultStore, pubConfigDir } from './credentials.ts'
+import { runSettingsCommand } from './settings.ts'
 import type { Snapshot } from './snapshot.ts'
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2)
   const command = args[0] ?? 'snapshot'
-  if (command !== 'snapshot') {
-    console.error('Usage: pub-engine snapshot [--out FILE]')
-    process.exitCode = 1
+  if (command === 'snapshot') {
+    await runSnapshot(args.slice(1))
     return
   }
+  if (command === 'settings') {
+    await runSettingsCommand(args.slice(1))
+    return
+  }
+  console.error('Usage: pub-engine snapshot [--out FILE] | pub-engine settings | pub-engine settings set …')
+  process.exitCode = 1
+}
+
+async function runSnapshot(args: readonly string[]): Promise<void> {
   const outFlag = args.indexOf('--out')
   const store = defaultStore()
   const configDir = pubConfigDir(store)
