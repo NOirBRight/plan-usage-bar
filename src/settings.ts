@@ -1,8 +1,8 @@
 import { join } from 'node:path'
 import { writeAtomic } from './atomic-write.ts'
-import { defaultStore, pubConfigDir } from './credentials.ts'
+import { defaultStore, pubConfigDir, readOptional } from './credentials.ts'
 import { loadSettings } from './engine.ts'
-import { DEFAULT_SETTINGS, type ProviderSettings, type PubSettings } from './snapshot.ts'
+import { DEFAULT_SETTINGS, parseSettings, type ProviderSettings, type PubSettings } from './snapshot.ts'
 
 const SETTINGS_USAGE = 'Usage: pub-engine settings | pub-engine settings set remaining-mode <true|false> | enabled <id> <true|false> | pinned <id> <true|false> | primary <id> <windowId> | primary <id> --clear | order <id> [<id>...]'
 
@@ -50,7 +50,16 @@ export async function runSettingsCommand(args: readonly string[]): Promise<void>
     process.exitCode = 1
     return
   }
-  const current = await loadSettings(store, configDir)
+  // A hand-edit typo must not be replaced by defaults plus one change.
+  const text = await readOptional(store, join(configDir, 'settings.json'))
+  let current: PubSettings
+  try {
+    current = parseSettings(text === undefined ? undefined : JSON.parse(text) as unknown)
+  } catch {
+    console.error('settings.json is invalid')
+    process.exitCode = 1
+    return
+  }
   const next = applyMutation(current, mutation)
   if (typeof next === 'string') {
     console.error(next)

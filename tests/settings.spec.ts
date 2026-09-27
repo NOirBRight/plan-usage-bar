@@ -141,6 +141,17 @@ describe('pub-engine settings', () => {
 })
 
 describe('pub-engine settings set', () => {
+  it('refuses an unreadable settings file and leaves the bytes', async () => {
+    await withHome(async home => {
+      const path = await writeSettings(home, '{not json')
+      const result = await run(home, ['settings', 'set', 'enabled', 'grok', 'false'])
+      expect(result.code).toBe(1)
+      expect(result.stderr).toContain('settings.json is invalid')
+      expect(result.stdout).toBe('')
+      expect(await readFile(path, 'utf8')).toBe('{not json')
+    })
+  })
+
   it('sets remaining mode and preserves every other row', async () => {
     await withHome(async home => {
       await writeSettings(home, {

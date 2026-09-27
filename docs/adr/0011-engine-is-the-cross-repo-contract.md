@@ -26,3 +26,24 @@ AM01S 副屏版（Omarchy/Hyprland 上的 Quickshell 插件）只适用于那块
 ## 版本查询
 
 `pub-engine --version` 和 `pub-engine version` 在 stdout 打印 JSON：`version` 是 Engine 的 package 版本，`schemaVersion` 是它写出的 Snapshot 版本（当前为 1）。成功时退出码 0。
+
+## 契约：命令
+
+Shell 只依赖下面这些。成功时退出码 0，结果 JSON 打在 stdout。失败时退出码非 0，原因一行打在 stderr，stdout 为空，不写任何文件。
+
+| 命令 | stdout |
+|---|---|
+| `snapshot [--out FILE]` | Snapshot；同时原子写入 `--out` 指定的文件，默认 `~/.cache/pub/snapshot.json` |
+| `catalog` | Provider 目录数组，顺序即默认顺序 |
+| `settings` | 合并默认值后的设置；`settings.json` 读不出时按默认值，不改文件 |
+| `settings set remaining-mode <true\|false>` | 写入后的设置 |
+| `settings set enabled <id> <true\|false>` | 同上；关掉时一并取消 Pinned |
+| `settings set pinned <id> <true\|false>` | 同上 |
+| `settings set primary <id> <windowId>` / `primary <id> --clear` | 同上；`windowId` 必须是该 Provider 的 Quota Window |
+| `settings set order <id>...` | 同上；必须列出 `catalog` 里每个 id 各一次 |
+| `credentials set <id> [--<extra-flag> <value>]` | `{"id": "<id>"}`；凭据从 stdin 读到 EOF，不进 argv |
+| `credentials clear <id>` | `{"id": "<id>"}` |
+| `--version` / `version` | 见下节 |
+
+- `settings set` 遇到读不出的 `settings.json` 时失败（`settings.json is invalid`），不会用默认值覆盖；`credentials set` 对 `credentials.json` 同样如此。
+- `--<extra-flag>` 由 `catalog` 里 `extra.key` 的驼峰名转成短横线形式：`accountId` → `--account-id`，`userId` → `--user-id`。

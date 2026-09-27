@@ -1209,13 +1209,13 @@ const PubIndicator = GObject.registerClass({
             ids.splice(drag.to, 0, moved);
             const known = new Set(DEFAULT_SETTINGS.providers.map(row => row.id));
             const order = ids.filter(id => known.has(id));
-            if (!this._settingsSet(['order', ...order])) {
+            this._settingsSet(['order', ...order], ok => {
+                if (ok) {
+                    this._applyProviderOrder();
+                    this._rebuildStripSoon();
+                }
                 this._rebuildMenu();
-                return;
-            }
-            this._applyProviderOrder();
-            this._rebuildStripSoon();
-            this._rebuildMenu();
+            });
             return;
         }
         for (const row of drag.rows) {
@@ -1640,52 +1640,56 @@ const PubIndicator = GObject.registerClass({
             if (typeof value === 'string' && value.length > 0)
                 args.push(credentialFlag(spec.extra.key), value);
         }
-        const saved = this._credentialsCommand(args, credential.token);
-        if (!saved.ok) {
-            this._paste = { id, message: saved.detail.length > 0 ? saved.detail : '无法保存凭据。' };
+        this._runEngine(args, credential.token, 'credentials set', saved => {
+            if (!saved.ok) {
+                this._paste = { id, message: saved.detail.length > 0 ? saved.detail : '无法保存凭据。' };
+                this._rebuildMenu();
+                return;
+            }
+            this._loadCredentials();
+            this._paste = null;
+            this.requestSnapshot('manual');
             this._rebuildMenu();
-            return;
-        }
-        this._loadCredentials();
-        this._paste = null;
-        this.requestSnapshot('manual');
-        this._rebuildMenu();
+        });
     }
 
     _clearCredential(id) {
-        const cleared = this._credentialsCommand(['credentials', 'clear', id], null);
-        if (!cleared.ok) {
+        this._runEngine(['credentials', 'clear', id], null, 'credentials clear', cleared => {
+            if (cleared.ok) {
+                this._loadCredentials();
+                this.requestSnapshot('manual');
+            }
             this._rebuildMenu();
-            return;
-        }
-        this._loadCredentials();
-        this.requestSnapshot('manual');
-        this._rebuildMenu();
+        });
     }
 
     // ---------- settings actions ----------
 
     _setMode(remainingMode) {
-        if (!this._settingsSet(['remaining-mode', remainingMode ? 'true' : 'false']))
-            return;
-        this._snapshot.remainingMode = this._settings.remainingMode;
-        this._rebuildStripSoon();
-        this._rebuildMenu();
+        this._settingsSet(['remaining-mode', remainingMode ? 'true' : 'false'], ok => {
+            if (!ok)
+                return;
+            this._snapshot.remainingMode = this._settings.remainingMode;
+            this._rebuildStripSoon();
+            this._rebuildMenu();
+        });
     }
 
     _setEnabled(id, enabled) {
         const setting = this._settings.providers.find(item => item.id === id);
         if (!setting)
             return;
-        if (!this._settingsSet(['enabled', id, enabled ? 'true' : 'false'])) {
-            this._rebuildMenu();
-            return;
-        }
-        if (!enabled && this._cli?.id === id)
-            this._cancelLogin();
-        this._readSnapshotFile();
-        this._rebuildStripSoon();
-        this._rebuildMenuLater();
+        this._settingsSet(['enabled', id, enabled ? 'true' : 'false'], ok => {
+            if (!ok) {
+                this._rebuildMenu();
+                return;
+            }
+            if (!enabled && this._cli?.id === id)
+                this._cancelLogin();
+            this._readSnapshotFile();
+            this._rebuildStripSoon();
+            this._rebuildMenuLater();
+        });
     }
 
     _setPinned(id, pinned, immediate) {
@@ -1697,19 +1701,21 @@ const PubIndicator = GObject.registerClass({
             if (count >= PINNED_LIMIT)
                 return;
         }
-        if (!this._settingsSet(['pinned', id, pinned ? 'true' : 'false'])) {
-            this._rebuildMenu();
-            return;
-        }
-        const live = this._snapshot.providers.find(provider => provider.id === id);
-        const row = this._settings.providers.find(item => item.id === id);
-        if (live && row)
-            live.pinned = row.pinned === true;
-        this._rebuildStripSoon();
-        if (immediate)
-            this._rebuildMenu();
-        else
-            this._rebuildMenuLater();
+        this._settingsSet(['pinned', id, pinned ? 'true' : 'false'], ok => {
+            if (!ok) {
+                this._rebuildMenu();
+                return;
+            }
+            const live = this._snapshot.providers.find(provider => provider.id === id);
+            const row = this._settings.providers.find(item => item.id === id);
+            if (live && row)
+                live.pinned = row.pinned === true;
+            this._rebuildStripSoon();
+            if (immediate)
+                this._rebuildMenu();
+            else
+                this._rebuildMenuLater();
+        });
     }
 
     _setPrimary(id, windowId) {
@@ -1719,11 +1725,13 @@ const PubIndicator = GObject.registerClass({
         const args = windowId === null
             ? ['primary', id, '--clear']
             : ['primary', id, windowId];
-        if (!this._settingsSet(args))
-            return;
-        this._readSnapshotFile();
-        this._rebuildStripSoon();
-        this._rebuildMenu();
+        this._settingsSet(args, ok => {
+            if (!ok)
+                return;
+            this._readSnapshotFile();
+            this._rebuildStripSoon();
+            this._rebuildMenu();
+        });
     }
 
     _applyProviderOrder() {
@@ -1826,98 +1834,98 @@ const PubIndicator = GObject.registerClass({
         }
     }
 
-    // Provider login facts come from pub-engine catalog; the Shell does not keep its own table.
-    _loadCatalog() {
-        this._catalog = {};
+    // [node, pub-engine.mjs], or null when either is missing.
+    _engineArgv() {
         const engine = this._ext.dir.get_child('bin').get_child('pub-engine.mjs');
         const node = GLib.file_test('/usr/bin/node', GLib.FileTest.IS_EXECUTABLE)
             ? '/usr/bin/node'
             : GLib.find_program_in_path('node');
-        if (!engine.query_exists(null) || !node) {
+        if (!engine.query_exists(null) || !node)
+            return null;
+        return [node, engine.get_path()];
+    }
+
+    // Runs pub-engine off the main loop; done({ ok, stdout, detail }) runs only while alive.
+    // stdin carries a secret when there is one, never argv or a log line.
+    _runEngine(args, stdin, label, done) {
+        const argv = this._engineArgv();
+        if (!argv) {
             console.error('PUB: engine missing');
+            done({ ok: false, stdout: '', detail: '' });
             return;
         }
+        let flags = Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE;
+        if (stdin !== null)
+            flags |= Gio.SubprocessFlags.STDIN_PIPE;
+        let proc;
         try {
-            const proc = Gio.Subprocess.new(
-                [node, engine.get_path(), 'catalog'],
-                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE,
-            );
-            const [, stdout, stderr] = proc.communicate_utf8(null, null);
-            if (!proc.get_successful()) {
-                console.error('PUB: catalog failed', typeof stderr === 'string' ? stderr.trim() : '');
+            proc = Gio.Subprocess.new([...argv, ...args], flags);
+        } catch (error) {
+            console.error(`PUB: ${label} failed`, error.message ?? error);
+            done({ ok: false, stdout: '', detail: '' });
+            return;
+        }
+        proc.communicate_utf8_async(stdin, null, (subprocess, result) => {
+            let stdout = '';
+            let stderr = '';
+            try {
+                [, stdout, stderr] = subprocess.communicate_utf8_finish(result);
+            } catch (error) {
+                if (this._alive)
+                    console.error(`PUB: ${label} failed`, error.message ?? error);
+                if (this._alive)
+                    done({ ok: false, stdout: '', detail: '' });
                 return;
             }
-            const parsed = JSON.parse(stdout);
+            if (!this._alive)
+                return;
+            if (!subprocess.get_successful()) {
+                const detail = typeof stderr === 'string' ? stderr.trim() : '';
+                console.error(`PUB: ${label} failed`, detail);
+                done({ ok: false, stdout: '', detail });
+                return;
+            }
+            done({ ok: true, stdout: typeof stdout === 'string' ? stdout : '', detail: '' });
+        });
+    }
+
+    // Provider login facts come from pub-engine catalog; the Shell does not keep its own table.
+    _loadCatalog() {
+        this._catalog = {};
+        this._runEngine(['catalog'], null, 'catalog', result => {
+            if (!result.ok)
+                return;
+            let parsed;
+            try {
+                parsed = JSON.parse(result.stdout);
+            } catch (error) {
+                console.error('PUB: catalog failed', error);
+                return;
+            }
             if (!Array.isArray(parsed))
                 return;
+            const catalog = {};
             for (const entry of parsed) {
                 if (!entry || typeof entry.id !== 'string' || entry.id.length === 0)
                     continue;
-                this._catalog[entry.id] = entry;
+                catalog[entry.id] = entry;
             }
-        } catch (error) {
-            console.error('PUB: catalog failed', error);
-        }
+            this._catalog = catalog;
+            this._refreshUi();
+        });
     }
 
     _catalogEntry(id) {
         return this._catalog?.[id] ?? null;
     }
 
-    // Paste and logout go through pub-engine. The secret is stdin, never argv or a log line.
-    _credentialsCommand(args, stdin) {
-        const engine = this._ext.dir.get_child('bin').get_child('pub-engine.mjs');
-        const node = GLib.file_test('/usr/bin/node', GLib.FileTest.IS_EXECUTABLE)
-            ? '/usr/bin/node'
-            : GLib.find_program_in_path('node');
-        if (!engine.query_exists(null) || !node) {
-            console.error('PUB: engine missing');
-            return { ok: false, detail: '' };
-        }
-        try {
-            let flags = Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE;
-            if (stdin !== null)
-                flags |= Gio.SubprocessFlags.STDIN_PIPE;
-            const proc = Gio.Subprocess.new([node, engine.get_path(), ...args], flags);
-            const [, , stderr] = proc.communicate_utf8(stdin, null);
-            if (!proc.get_successful()) {
-                const detail = typeof stderr === 'string' ? stderr.trim() : '';
-                console.error('PUB: credentials command failed', detail);
-                return { ok: false, detail };
-            }
-            return { ok: true, detail: '' };
-        } catch (error) {
-            console.error('PUB: credentials command failed', error.message ?? error);
-            return { ok: false, detail: '' };
-        }
-    }
-
     // Settings edits go through pub-engine; the Shell does not write settings.json.
-    _settingsSet(args) {
-        const engine = this._ext.dir.get_child('bin').get_child('pub-engine.mjs');
-        const node = GLib.file_test('/usr/bin/node', GLib.FileTest.IS_EXECUTABLE)
-            ? '/usr/bin/node'
-            : GLib.find_program_in_path('node');
-        if (!engine.query_exists(null) || !node) {
-            console.error('PUB: engine missing');
-            return false;
-        }
-        try {
-            const proc = Gio.Subprocess.new(
-                [node, engine.get_path(), 'settings', 'set', ...args],
-                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE,
-            );
-            const [, , stderr] = proc.communicate_utf8(null, null);
-            if (!proc.get_successful()) {
-                console.error('PUB: settings set failed', typeof stderr === 'string' ? stderr.trim() : '');
-                return false;
-            }
-        } catch (error) {
-            console.error('PUB: settings set failed', error);
-            return false;
-        }
-        this._loadSettings();
-        return true;
+    _settingsSet(args, done) {
+        this._runEngine(['settings', 'set', ...args], null, 'settings set', result => {
+            if (result.ok)
+                this._loadSettings();
+            done(result.ok);
+        });
     }
 
     _readSnapshotFile() {
@@ -1966,11 +1974,8 @@ const PubIndicator = GObject.registerClass({
             this._refreshUi();
             return;
         }
-        const engine = this._ext.dir.get_child('bin').get_child('pub-engine.mjs');
-        const node = GLib.file_test('/usr/bin/node', GLib.FileTest.IS_EXECUTABLE)
-            ? '/usr/bin/node'
-            : GLib.find_program_in_path('node');
-        if (!engine.query_exists(null) || !node) {
+        const argv = this._engineArgv();
+        if (!argv) {
             this._armTimer();
             this._refreshUi();
             return;
@@ -1978,7 +1983,7 @@ const PubIndicator = GObject.registerClass({
         this._refreshing = true;
         try {
             const proc = Gio.Subprocess.new(
-                [node, engine.get_path(), 'snapshot', '--out', this._snapshotPath()],
+                [...argv, 'snapshot', '--out', this._snapshotPath()],
                 Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE,
             );
             this._engineProc = proc;
