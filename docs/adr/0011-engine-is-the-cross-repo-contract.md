@@ -45,5 +45,5 @@ Shell 只依赖下面这些。成功时退出码 0，结果 JSON 打在 stdout�
 | `credentials clear <id>` | `{"id": "<id>"}` |
 | `--version` / `version` | 见下节 |
 
-- `settings set` 遇到读不出的 `settings.json` 时失败（`settings.json is invalid`），不会用默认值覆盖；`credentials set` 对 `credentials.json` 同样如此。
+- `settings set` 遇到读不出、不是对象、或 `providers` 不是数组的 `settings.json` 时失败（`settings.json is invalid`），不会用默认值覆盖；`credentials set` / `credentials clear` 对 `credentials.json` 同样如此。
 - `--<extra-flag>` 由 `catalog` 里 `extra.key` 的驼峰名转成短横线形式：`accountId` → `--account-id`，`userId` → `--user-id`。

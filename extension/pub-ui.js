@@ -1643,23 +1643,22 @@ const PubIndicator = GObject.registerClass({
         this._runEngine(args, credential.token, 'credentials set', saved => {
             if (!saved.ok) {
                 this._paste = { id, message: saved.detail.length > 0 ? saved.detail : '无法保存凭据。' };
-                this._rebuildMenu();
+                if (this._popoverOpen)
+                    this._rebuildMenu();
                 return;
             }
             this._loadCredentials();
             this._paste = null;
             this.requestSnapshot('manual');
-            this._rebuildMenu();
         });
     }
 
     _clearCredential(id) {
         this._runEngine(['credentials', 'clear', id], null, 'credentials clear', cleared => {
-            if (cleared.ok) {
-                this._loadCredentials();
-                this.requestSnapshot('manual');
-            }
-            this._rebuildMenu();
+            if (!cleared.ok)
+                return;
+            this._loadCredentials();
+            this.requestSnapshot('manual');
         });
     }
 
@@ -1697,8 +1696,11 @@ const PubIndicator = GObject.registerClass({
         if (!setting || !setting.enabled)
             return;
         if (pinned && !setting.pinned) {
+            // Pins still queued have not reached this._settings yet.
+            const queued = (this._settingsQueue ?? [])
+                .filter(job => job.args[0] === 'pinned' && job.args[2] === 'true').length;
             const count = this._settings.providers.filter(item => item.enabled && item.pinned).length;
-            if (count >= PINNED_LIMIT)
+            if (count + queued >= PINNED_LIMIT)
                 return;
         }
         this._settingsSet(['pinned', id, pinned ? 'true' : 'false'], ok => {
@@ -1920,11 +1922,25 @@ const PubIndicator = GObject.registerClass({
     }
 
     // Settings edits go through pub-engine; the Shell does not write settings.json.
+    // One write at a time: each run rewrites the whole file, so a second toggle
+    // started before the first lands would erase it.
     _settingsSet(args, done) {
-        this._runEngine(['settings', 'set', ...args], null, 'settings set', result => {
+        this._settingsQueue ??= [];
+        this._settingsQueue.push({ args, done });
+        if (this._settingsQueue.length === 1)
+            this._nextSettingsSet();
+    }
+
+    _nextSettingsSet() {
+        const job = this._settingsQueue?.[0];
+        if (!job)
+            return;
+        this._runEngine(['settings', 'set', ...job.args], null, 'settings set', result => {
+            this._settingsQueue.shift();
             if (result.ok)
                 this._loadSettings();
-            done(result.ok);
+            job.done(result.ok);
+            this._nextSettingsSet();
         });
     }
 
@@ -2247,6 +2263,7 @@ const PubIndicator = GObject.registerClass({
 
     destroy() {
         this._alive = false;
+        this._settingsQueue = [];
         this._endDrag(false);
         this._cancelLogin();
         this._killEngine();

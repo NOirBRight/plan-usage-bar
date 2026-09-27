@@ -52,14 +52,18 @@ export async function runSettingsCommand(args: readonly string[]): Promise<void>
   }
   // A hand-edit typo must not be replaced by defaults plus one change.
   const text = await readOptional(store, join(configDir, 'settings.json'))
-  let current: PubSettings
+  let parsed: unknown
   try {
-    current = parseSettings(text === undefined ? undefined : JSON.parse(text) as unknown)
+    parsed = text === undefined ? undefined : JSON.parse(text) as unknown
   } catch {
+    parsed = null
+  }
+  if (text !== undefined && !settingsShape(parsed)) {
     console.error('settings.json is invalid')
     process.exitCode = 1
     return
   }
+  const current = parseSettings(parsed)
   const next = applyMutation(current, mutation)
   if (typeof next === 'string') {
     console.error(next)
@@ -69,6 +73,13 @@ export async function runSettingsCommand(args: readonly string[]): Promise<void>
   const json = formatSettings(next)
   await writeSettings(join(configDir, 'settings.json'), json)
   process.stdout.write(json)
+}
+
+// An object whose providers, if present, is an array. Anything else would merge to defaults.
+function settingsShape(value: unknown): boolean {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+  const providers = (value as { providers?: unknown }).providers
+  return providers === undefined || Array.isArray(providers)
 }
 
 function parseBool(value: string | undefined): boolean | undefined {
