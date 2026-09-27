@@ -1641,14 +1641,19 @@ const PubIndicator = GObject.registerClass({
                 args.push(credentialFlag(spec.extra.key), value);
         }
         this._runEngine(args, credential.token, 'credentials set', saved => {
+            // The user may have moved on to another Provider's paste form.
+            const current = this._paste?.id === id;
             if (!saved.ok) {
+                if (!current)
+                    return;
                 this._paste = { id, message: saved.detail.length > 0 ? saved.detail : '无法保存凭据。' };
                 if (this._popoverOpen)
                     this._rebuildMenu();
                 return;
             }
             this._loadCredentials();
-            this._paste = null;
+            if (current)
+                this._paste = null;
             this.requestSnapshot('manual');
         });
     }
@@ -1937,10 +1942,15 @@ const PubIndicator = GObject.registerClass({
             return;
         this._runEngine(['settings', 'set', ...job.args], null, 'settings set', result => {
             this._settingsQueue.shift();
-            if (result.ok)
-                this._loadSettings();
-            job.done(result.ok);
-            this._nextSettingsSet();
+            try {
+                if (result.ok)
+                    this._loadSettings();
+                job.done(result.ok);
+            } catch (error) {
+                console.error('PUB: settings set callback failed', error);
+            } finally {
+                this._nextSettingsSet();
+            }
         });
     }
 
