@@ -8,13 +8,7 @@ import {
   type CredentialStore,
 } from './credentials.ts'
 import { HttpError, type FetchLike } from './http.ts'
-import { claude } from './providers/claude.ts'
-import { codex } from './providers/codex.ts'
-import { cursor } from './providers/cursor.ts'
-import { grok } from './providers/grok.ts'
-import { ollamaCloud } from './providers/ollama.ts'
-import { openCodeGo } from './providers/opencode-go.ts'
-import { commandCode } from './providers/commandcode.ts'
+import { ADAPTERS } from './providers/registry.ts'
 import type { ProviderAdapter } from './providers/types.ts'
 import { join } from 'node:path'
 
@@ -25,16 +19,6 @@ export interface SnapshotRequest {
   now?: () => number
   configDir?: string
   previous?: Snapshot
-}
-
-const ADAPTERS: Record<string, ProviderAdapter> = {
-  claude,
-  codex,
-  cursor,
-  grok,
-  'ollama-cloud': ollamaCloud,
-  'opencode-go': openCodeGo,
-  commandcode: commandCode,
 }
 
 export async function readSnapshot(request: SnapshotRequest): Promise<Snapshot> {

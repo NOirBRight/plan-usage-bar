@@ -1,11 +1,4 @@
-import { claude } from './providers/claude.ts'
-import { codex } from './providers/codex.ts'
-import { cursor } from './providers/cursor.ts'
-import { grok } from './providers/grok.ts'
-import { ollamaCloud } from './providers/ollama.ts'
-import { openCodeGo } from './providers/opencode-go.ts'
-import { commandCode } from './providers/commandcode.ts'
-import type { ProviderAdapter } from './providers/types.ts'
+import { ADAPTERS } from './providers/registry.ts'
 import { DEFAULT_SETTINGS, shortNameFor, type ProviderIdentity } from './snapshot.ts'
 
 export type CredentialKind = 'cli' | 'key' | 'both'
@@ -58,16 +51,6 @@ interface LoginFacts {
   page?: CatalogPage
   extra?: CatalogExtra
   codeEntry?: CatalogCodeEntry
-}
-
-const ADAPTERS: Record<string, ProviderAdapter> = {
-  claude,
-  codex,
-  cursor,
-  grok,
-  'ollama-cloud': ollamaCloud,
-  'opencode-go': openCodeGo,
-  commandcode: commandCode,
 }
 
 const LOGIN: Record<string, LoginFacts> = {

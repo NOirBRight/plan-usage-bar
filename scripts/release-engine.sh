@@ -14,8 +14,9 @@ node --experimental-strip-types --disable-warning=ExperimentalWarning \
 
 version="$(node -e 'process.stdout.write(JSON.parse(require("node:fs").readFileSync("package.json","utf8")).version)')"
 tag="v${version}"
-printf 'gh release create %s --title %s %s\n' "$tag" "$tag" "$asset"
+target="$(git rev-parse HEAD)"
+printf 'gh release create %s --target %s --title %s %s\n' "$tag" "$target" "$tag" "$asset"
 
 if [[ "${PUB_CUT_RELEASE:-}" == "1" ]]; then
-  gh release create "$tag" --title "$tag" "$asset"
+  gh release create "$tag" --target "$target" --title "$tag" "$asset"
 fi

@@ -1,5 +1,6 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { writeAtomic } from './atomic-write.ts'
 import { runCatalogCommand } from './catalog.ts'
 import { loadSettings, readSnapshot } from './engine.ts'
 import { defaultStore, pubConfigDir, runCredentialsCommand } from './credentials.ts'
@@ -51,10 +52,7 @@ async function runSnapshot(args: readonly string[]): Promise<void> {
   const previous = await readPrevious(out)
   const snapshot = await readSnapshot({ settings, store, configDir, previous })
   const json = `${JSON.stringify(snapshot, null, 2)}\n`
-  await mkdir(dirname(out), { recursive: true })
-  const tmp = `${out}.${String(process.pid)}.tmp`
-  await writeFile(tmp, json)
-  await rename(tmp, out)
+  await writeAtomic(out, json)
   process.stdout.write(json)
 }
 

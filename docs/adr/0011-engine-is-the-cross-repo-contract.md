@@ -7,11 +7,11 @@ AM01S 副屏版（Omarchy/Hyprland 上的 Quickshell 插件）只适用于那块
 - 可见外壳不止 GNOME 扩展一个。GNOME 扩展是 GNOME 上的 Shell；`pub-am01s` 是 Omarchy + AM01S 上的 Shell。部分取代 0002。
 - Shell 与 PUB 之间只经过 Engine CLI：
   - `pub-engine snapshot`：照旧写 Snapshot，每个 Shell 自己定时驱动（0004 不变）。
-  - `pub-engine catalog`：Provider 目录（名字、图标、凭据类型、登录命令、官网 URL、提示文字）。
+  - `pub-engine catalog`：Provider 目录（名字、图标、凭据类型、登录命令、官网 URL、提示文字）。需要粘贴授权码的 Provider 带 `codeEntry`：`hint`、`invalidPattern`（字符串），以及 `flags`（交给 `new RegExp(invalidPattern, flags)`，Claude 用 `iu`）。
   - `pub-engine settings set …`：Enabled、Pinned、顺序、Remaining 读法、Primary Window。
   - `pub-engine credentials set <id>`：凭据走 stdin，写进 `credentials.json`（0005 不变）。
 - Snapshot 带 `schemaVersion`，并为窄屏 Shell 带短名：Provider 的 `shortName`（OpenCode Go → OpenCode）、Quota Window 的 `shortLabel`（Cursor Models → Cursor）。Shell 遇到不认识的版本就显示「需要更新」，不去猜。
-- 每次发版把构建好的 `pub-engine.mjs`（单文件、只依赖 `node:`）作为 GitHub Release 附件。其他 Shell 固定 Engine 的方式是下载 tag `vX.Y.Z` 的 Release 附件 `pub-engine.mjs`，而不是把本仓库当作 git 依赖。
+- 每次发版把构建好的 `pub-engine.mjs`（单文件、只依赖 `node:`）作为 GitHub Release 附件。`gh release create` 带 `--target`，tag 指向这次构建的提交，而不是默认分支。其他 Shell 固定 Engine 的方式是下载 tag `vX.Y.Z` 的 Release 附件 `pub-engine.mjs`，而不是把本仓库当作 git 依赖。
 - GNOME 扩展也改走这些命令，`pub-ui.js` 里的 `LOGIN` 表和 JSON 读写搬进 Engine。
 
 ## 契约：errorKind

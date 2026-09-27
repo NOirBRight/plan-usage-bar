@@ -1,5 +1,5 @@
-import { mkdir, rename, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
+import { writeAtomic } from './atomic-write.ts'
 import { defaultStore, pubConfigDir } from './credentials.ts'
 import { loadSettings } from './engine.ts'
 import { DEFAULT_SETTINGS, type ProviderSettings, type PubSettings } from './snapshot.ts'
@@ -159,9 +159,14 @@ function reorder(settings: PubSettings, ids: readonly string[]): PubSettings | s
   return { remainingMode: settings.remainingMode, providers: [...ordered, ...extras] }
 }
 
+// Claude kinds and Ollama limit keys are whatever the API sends. Other providers stay on the fixed list.
+const WINDOW_SLUG = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/u
+const DYNAMIC_PROVIDERS = new Set(['claude', 'ollama-cloud'])
+
 function isKnownWindow(providerId: string, windowId: string): boolean {
   if (providerId === 'codex') return CODEX_WINDOW.test(windowId)
-  return FIXED_WINDOWS[providerId]?.includes(windowId) ?? false
+  if (FIXED_WINDOWS[providerId]?.includes(windowId)) return true
+  return DYNAMIC_PROVIDERS.has(providerId) && WINDOW_SLUG.test(windowId)
 }
 
 function formatSettings(settings: PubSettings): string {
@@ -177,8 +182,5 @@ function formatSettings(settings: PubSettings): string {
 }
 
 async function writeSettings(path: string, json: string): Promise<void> {
-  await mkdir(dirname(path), { recursive: true })
-  const tmp = `${path}.${String(process.pid)}.tmp`
-  await writeFile(tmp, json)
-  await rename(tmp, path)
+  await writeAtomic(path, json)
 }

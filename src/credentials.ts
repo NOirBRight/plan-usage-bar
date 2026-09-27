@@ -1,6 +1,7 @@
-import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
+import { writeAtomic } from './atomic-write.ts'
 import { stdin } from 'node:process'
 import { catalogEntries } from './catalog.ts'
 import { isRecord } from './remaining.ts'
@@ -475,17 +476,7 @@ function formatDocument(value: unknown): string {
 }
 
 async function writePrivate(path: string, json: string): Promise<void> {
-  await mkdir(dirname(path), { recursive: true })
-  const tmp = `${path}.${String(process.pid)}.tmp`
-  try {
-    await writeFile(tmp, json, { mode: 0o600 })
-    // writeFile applies the umask; chmod keeps the mode user-only.
-    await chmod(tmp, 0o600)
-    await rename(tmp, path)
-  } catch (error) {
-    await unlink(tmp).catch(() => undefined)
-    throw error
-  }
+  await writeAtomic(path, json, 0o600)
 }
 
 async function readStdin(): Promise<string> {
