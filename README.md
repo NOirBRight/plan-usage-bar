@@ -108,6 +108,10 @@ PUB_NEST_MODE=ubuntu bash scripts/nested-shell.sh  # Ubuntu Yaru 主题
 
 需要 `mutter-dev-bin` 提供的 `/usr/libexec/mutter-devkit`。
 
+## 其他 Shell
+
+其他仓库里的 Shell 不把本仓库当作 git 依赖。它们按 tag `vX.Y.Z` 下载该版本 GitHub Release 上的附件 `pub-engine.mjs`，以此固定 Engine。
+
 ## 许可证
 
 [GPL-2.0-or-later](LICENSE)

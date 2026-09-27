@@ -11,7 +11,7 @@ AM01S 副屏版（Omarchy/Hyprland 上的 Quickshell 插件）只适用于那块
   - `pub-engine settings set …`：Enabled、Pinned、顺序、Remaining 读法、Primary Window。
   - `pub-engine credentials set <id>`：凭据走 stdin，写进 `credentials.json`（0005 不变）。
 - Snapshot 带 `schemaVersion`，并为窄屏 Shell 带短名：Provider 的 `shortName`（OpenCode Go → OpenCode）、Quota Window 的 `shortLabel`（Cursor Models → Cursor）。Shell 遇到不认识的版本就显示「需要更新」，不去猜。
-- 每次发版把构建好的 `pub-engine.mjs`（单文件、只依赖 `node:`）作为 GitHub Release 附件。其他仓库按 tag 下载固定版本，不做 git 依赖。
+- 每次发版把构建好的 `pub-engine.mjs`（单文件、只依赖 `node:`）作为 GitHub Release 附件。其他 Shell 固定 Engine 的方式是下载 tag `vX.Y.Z` 的 Release 附件 `pub-engine.mjs`，而不是把本仓库当作 git 依赖。
 - GNOME 扩展也改走这些命令，`pub-ui.js` 里的 `LOGIN` 表和 JSON 读写搬进 Engine。
 
 ## 契约：errorKind
