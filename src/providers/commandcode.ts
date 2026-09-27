@@ -1,6 +1,6 @@
 import type { ProviderAccess } from '../credentials.ts'
 import { getJson, getJsonOptional, type FetchLike } from '../http.ts'
-import type { ProviderIdentity, QuotaWindow } from '../snapshot.ts'
+import type { ProviderIdentity, WindowReport } from '../snapshot.ts'
 import { isRecord, remainingFromUsedFraction, resetLabel, isoInstant, toNumber } from '../remaining.ts'
 import type { ProviderAdapter, UsageFields } from './types.ts'
 
@@ -66,7 +66,7 @@ function parsePacing(
   id: string,
   label: string,
   now: number,
-): QuotaWindow | undefined {
+): WindowReport | undefined {
   if (!isRecord(value)) return undefined
   const used = nonNeg(value['used'] ?? value['usage'] ?? value['consumed'])
   const cap = nonNeg(value['cap'] ?? value['limit'] ?? value['total'])
@@ -111,7 +111,7 @@ function parseCommandCodeUsage(
     ? Math.min(1, Math.max(0, monthlyCredits / cap))
     : null
   const periodEnd = isoInstant(sub['currentPeriodEnd'] ?? sub['current_period_end'])
-  const windows: QuotaWindow[] = []
+  const windows: WindowReport[] = []
   if (monthlyCredits !== undefined || monthlyRemaining !== null) {
     windows.push({
       id: 'monthly',

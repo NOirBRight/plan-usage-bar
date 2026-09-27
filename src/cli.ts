@@ -1,17 +1,46 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { writeAtomic } from './atomic-write.ts'
+import { runCatalogCommand } from './catalog.ts'
 import { loadSettings, readSnapshot } from './engine.ts'
-import { defaultStore, pubConfigDir } from './credentials.ts'
-import type { Snapshot } from './snapshot.ts'
+import { defaultStore, pubConfigDir, runCredentialsCommand } from './credentials.ts'
+import { runSettingsCommand } from './settings.ts'
+import { SCHEMA_VERSION, type Snapshot } from './snapshot.ts'
+import packageJson from '../package.json' with { type: 'json' }
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2)
   const command = args[0] ?? 'snapshot'
-  if (command !== 'snapshot') {
-    console.error('Usage: pub-engine snapshot [--out FILE]')
-    process.exitCode = 1
+  if (command === '--version' || command === 'version') {
+    printVersion()
     return
   }
+  if (command === 'snapshot') {
+    await runSnapshot(args.slice(1))
+    return
+  }
+  if (command === 'settings') {
+    await runSettingsCommand(args.slice(1))
+    return
+  }
+  if (command === 'catalog') {
+    runCatalogCommand()
+    return
+  }
+  if (command === 'credentials') {
+    await runCredentialsCommand(args.slice(1))
+    return
+  }
+  console.error('Usage: pub-engine snapshot [--out FILE] | pub-engine catalog | pub-engine --version | pub-engine settings | pub-engine settings set … | pub-engine credentials set <id> | pub-engine credentials clear <id>')
+  process.exitCode = 1
+}
+
+function printVersion(): void {
+  const json = `${JSON.stringify({ version: packageJson.version, schemaVersion: SCHEMA_VERSION }, null, 2)}\n`
+  process.stdout.write(json)
+}
+
+async function runSnapshot(args: readonly string[]): Promise<void> {
   const outFlag = args.indexOf('--out')
   const store = defaultStore()
   const configDir = pubConfigDir(store)
@@ -23,10 +52,7 @@ async function main(): Promise<void> {
   const previous = await readPrevious(out)
   const snapshot = await readSnapshot({ settings, store, configDir, previous })
   const json = `${JSON.stringify(snapshot, null, 2)}\n`
-  await mkdir(dirname(out), { recursive: true })
-  const tmp = `${out}.${String(process.pid)}.tmp`
-  await writeFile(tmp, json)
-  await rename(tmp, out)
+  await writeAtomic(out, json)
   process.stdout.write(json)
 }
 

@@ -1,6 +1,6 @@
 import type { ProviderAccess } from '../credentials.ts'
 import { getJson, type FetchLike } from '../http.ts'
-import type { ProviderIdentity, ProviderSnapshot, QuotaWindow } from '../snapshot.ts'
+import type { ProviderIdentity, ProviderSnapshot, WindowReport } from '../snapshot.ts'
 import { isRecord, remainingFromUsedFraction, resetLabel, isoInstant, toNumber } from '../remaining.ts'
 import type { ProviderAdapter, UsageFields } from './types.ts'
 
@@ -35,12 +35,12 @@ function parseOllamaUsage(
   body: unknown,
   now: number,
   account?: OllamaAccount,
-): Pick<ProviderSnapshot, 'plan' | 'remaining' | 'windows' | 'cost' | 'note'> {
+): Pick<ProviderSnapshot, 'plan' | 'remaining' | 'cost' | 'note'> & { windows: WindowReport[] } {
   if (!isRecord(body) || !isRecord(body['limits'])) {
     throw new Error('Ollama usage reply has no limits')
   }
   const limits = body['limits']
-  const windows: QuotaWindow[] = []
+  const windows: WindowReport[] = []
   for (const [key, value] of Object.entries(limits)) {
     if (!isRecord(value)) continue
     const usage = value['usage']
@@ -72,7 +72,7 @@ function windowReset(
   id: string,
   now: number,
   account?: OllamaAccount,
-): Pick<QuotaWindow, 'resetsAt' | 'resetLabel'> {
+): Pick<WindowReport, 'resetsAt' | 'resetLabel'> {
   const direct = isoInstant(
     record['resets_at'] ?? record['reset_at'] ?? record['reset'] ?? record['resetsAt'],
   )

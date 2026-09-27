@@ -1,6 +1,6 @@
 import type { ProviderAccess } from '../credentials.ts'
 import { getJson, getJsonOptional, type FetchLike } from '../http.ts'
-import type { ProviderIdentity, ProviderSnapshot, QuotaWindow } from '../snapshot.ts'
+import type { ProviderIdentity, ProviderSnapshot, WindowReport } from '../snapshot.ts'
 import { isRecord, remainingFromUsedPercent, resetLabel, isoInstant } from '../remaining.ts'
 import type { ProviderAdapter, UsageFields } from './types.ts'
 
@@ -16,7 +16,7 @@ function parseGrokUsage(
   body: unknown,
   now: number,
   plan?: string,
-): Pick<ProviderSnapshot, 'plan' | 'remaining' | 'windows'> {
+): Pick<ProviderSnapshot, 'plan' | 'remaining'> & { windows: WindowReport[] } {
   if (!isRecord(body) || !isRecord(body['config'])) {
     throw new Error('Grok billing reply has no config')
   }
@@ -39,7 +39,7 @@ function parseGrokUsage(
     throw new Error('Grok billing reply has no creditUsagePercent')
   }
   const remaining = remainingFromUsedPercent(percent)
-  const window: QuotaWindow = {
+  const window: WindowReport = {
     id: 'weekly',
     label: 'Weekly',
     remaining,

@@ -1,4 +1,4 @@
-import { parseSettings, type ProviderSnapshot, type PubSettings, type Snapshot, type SnapshotErrorKind } from './snapshot.ts'
+import { contractWindow, parseSettings, SCHEMA_VERSION, shortNameFor, type ProviderSnapshot, type PubSettings, type Snapshot, type SnapshotErrorKind, type WindowReport } from './snapshot.ts'
 import {
   defaultStore,
   loadPubCredentials,
@@ -8,13 +8,7 @@ import {
   type CredentialStore,
 } from './credentials.ts'
 import { HttpError, type FetchLike } from './http.ts'
-import { claude } from './providers/claude.ts'
-import { codex } from './providers/codex.ts'
-import { cursor } from './providers/cursor.ts'
-import { grok } from './providers/grok.ts'
-import { ollamaCloud } from './providers/ollama.ts'
-import { openCodeGo } from './providers/opencode-go.ts'
-import { commandCode } from './providers/commandcode.ts'
+import { ADAPTERS } from './providers/registry.ts'
 import type { ProviderAdapter } from './providers/types.ts'
 import { join } from 'node:path'
 
@@ -25,16 +19,6 @@ export interface SnapshotRequest {
   now?: () => number
   configDir?: string
   previous?: Snapshot
-}
-
-const ADAPTERS: Record<string, ProviderAdapter> = {
-  claude,
-  codex,
-  cursor,
-  grok,
-  'ollama-cloud': ollamaCloud,
-  'opencode-go': openCodeGo,
-  commandcode: commandCode,
 }
 
 export async function readSnapshot(request: SnapshotRequest): Promise<Snapshot> {
@@ -51,12 +35,21 @@ export async function readSnapshot(request: SnapshotRequest): Promise<Snapshot> 
     const adapter = ADAPTERS[row.id]
     if (adapter === undefined) continue
     const next = await readProvider(row.id, row.pinned, adapter, store, pub[row.id], fetchImpl, now, fetchedAt)
-    providers.push(applyPrimary(keepLastGood(next, previousById.get(row.id)), row.primary))
+    providers.push(contractProvider(applyPrimary(keepLastGood(next, previousById.get(row.id)), row.primary)))
   }
   return {
+    schemaVersion: SCHEMA_VERSION,
     fetchedAt,
     remainingMode: request.settings.remainingMode,
     providers,
+  }
+}
+
+function contractProvider(provider: Omit<ProviderSnapshot, 'windows'> & { windows: readonly WindowReport[] }): ProviderSnapshot {
+  return {
+    ...provider,
+    shortName: shortNameFor(provider.name),
+    windows: provider.windows.map(window => contractWindow(window)),
   }
 }
 
@@ -106,6 +99,7 @@ async function readProvider(
   const base: ProviderSnapshot = {
     id: identity.id,
     name: identity.name,
+    shortName: shortNameFor(identity.name),
     pinned,
     accent: identity.accent,
     fetchedAt,
@@ -124,7 +118,7 @@ async function readProvider(
     return { ...base, error: 'signed out', errorKind: 'signed-out' }
   try {
     const usage = await adapter.pull(access, fetchImpl, now)
-    return { ...base, ...usage, credentialSource: access.source }
+    return contractProvider({ ...base, ...usage, credentialSource: access.source })
   } catch (error) {
     return { ...base, credentialSource: access.source, ...classifyFetchError(error) }
   }

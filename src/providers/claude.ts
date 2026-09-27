@@ -1,6 +1,6 @@
 import type { ProviderAccess } from '../credentials.ts'
 import { getJson, type FetchLike } from '../http.ts'
-import type { ProviderIdentity, ProviderSnapshot, QuotaWindow } from '../snapshot.ts'
+import type { ProviderIdentity, ProviderSnapshot, WindowReport } from '../snapshot.ts'
 import { isRecord, remainingFromUsedPercent, resetLabel, isoInstant } from '../remaining.ts'
 import type { ProviderAdapter, UsageFields } from './types.ts'
 
@@ -22,11 +22,11 @@ function parseClaudeUsage(
   body: unknown,
   now: number,
   plan?: string,
-): Pick<ProviderSnapshot, 'plan' | 'remaining' | 'windows' | 'extra' | 'extraNote'> {
+): Pick<ProviderSnapshot, 'plan' | 'remaining' | 'extra' | 'extraNote'> & { windows: WindowReport[] } {
   if (!isRecord(body) || !Array.isArray(body['limits'])) {
     throw new Error('Claude usage reply has no limits')
   }
-  const windows: QuotaWindow[] = []
+  const windows: WindowReport[] = []
   for (const item of body['limits']) {
     if (!isRecord(item)) continue
     const kind = item['kind']
