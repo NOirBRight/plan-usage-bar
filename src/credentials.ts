@@ -6,10 +6,17 @@ import { stdin } from 'node:process'
 import { catalogEntries } from './catalog.ts'
 import { isRecord } from './remaining.ts'
 
+export interface CommandResult {
+  code: number
+  stdout: string
+}
+
 export interface CredentialStore {
   readFile(path: string): Promise<string>
   env: NodeJS.ProcessEnv
   home: string
+  /** Runs a credential CLI. Absent in tests that only model files. */
+  run?(command: readonly string[]): Promise<CommandResult>
 }
 
 export interface PubCredential {
@@ -34,6 +41,15 @@ export function defaultStore(): CredentialStore {
     readFile: async (path: string) => (await import('node:fs/promises')).readFile(path, 'utf8'),
     env: process.env,
     home: homedir(),
+    run: async (command: readonly string[]) => {
+      const { execFile } = await import('node:child_process')
+      return await new Promise(resolve => {
+        execFile(command[0]!, command.slice(1), { timeout: 5_000, maxBuffer: 1024 * 1024 }, (error, stdout) => {
+          const code = error === null ? 0 : typeof error.code === 'number' ? error.code : 1
+          resolve({ code, stdout })
+        })
+      })
+    },
   }
 }
 
@@ -205,7 +221,41 @@ function envToken(store: CredentialStore, names: readonly string[]): ProviderAcc
   }
 }
 
+async function openCodeGoFromExport(store: CredentialStore): Promise<ProviderAccess | undefined> {
+  if (store.run === undefined) return undefined
+  let result: CommandResult
+  try {
+    result = await store.run(['opencode', 'auth', 'export', 'opencode-go'])
+  } catch {
+    return undefined
+  }
+  if (result.code !== 0) return undefined
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(result.stdout) as unknown
+  } catch {
+    return undefined
+  }
+  const rows = Array.isArray(parsed) ? parsed : [parsed]
+  let token: string | undefined
+  for (const row of rows) {
+    if (!isRecord(row) || row['integrationID'] !== 'opencode-go') continue
+    // Multiple Accounts can be stored; the active one is the Account OpenCode uses.
+    if (row['active'] === false) continue
+    const value = row['value']
+    if (!isRecord(value) || value['type'] !== 'key') continue
+    const key = value['key']
+    if (typeof key === 'string' && key.length > 0) token = key
+  }
+  if (token === undefined) return undefined
+  return { token, source: 'cli' }
+}
+
 async function openCodeGoFromCli(store: CredentialStore): Promise<ProviderAccess | undefined> {
+  // OpenCode 2 keeps credentials in its own database, not auth.json. auth.json
+  // stays behind with the key that was current before the last login rotation.
+  const exported = await openCodeGoFromExport(store)
+  if (exported !== undefined) return exported
   const value = await readJsonFile(store, join(xdgDataHome(store), 'opencode', 'auth.json'))
   if (!isRecord(value) || !isRecord(value['opencode-go'])) return undefined
   const row = value['opencode-go']
