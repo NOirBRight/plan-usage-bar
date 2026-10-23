@@ -220,6 +220,39 @@ describe('resolveAccess', () => {
     await expect(resolveAccess('opencode-go', zenOnly)).resolves.toBeUndefined()
   })
 
+  it('prefers the active OpenCode 2 credential over a stale auth.json key', async () => {
+    const store: CredentialStore = {
+      ...memoryStore({
+        '/home/user/.local/share/opencode/auth.json': JSON.stringify({
+          'opencode-go': { type: 'api', key: 'stale-go' },
+        }),
+      }),
+      run: async command => {
+        expect(command).toEqual(['opencode', 'auth', 'export', 'opencode-go'])
+        return {
+          code: 0,
+          stdout: JSON.stringify([
+            { id: 'cred_old', integrationID: 'opencode-go', active: false, value: { type: 'key', key: 'old-go' } },
+            { id: 'cred_new', integrationID: 'opencode-go', active: true, value: { type: 'key', key: 'db-go' } },
+          ]),
+        }
+      },
+    }
+    await expect(resolveAccess('opencode-go', store)).resolves.toEqual({ token: 'db-go', source: 'cli' })
+  })
+
+  it('falls back to OpenCode auth.json when the credential export fails', async () => {
+    const store: CredentialStore = {
+      ...memoryStore({
+        '/home/user/.local/share/opencode/auth.json': JSON.stringify({
+          'opencode-go': { type: 'api', key: 'cli-go' },
+        }),
+      }),
+      run: async () => ({ code: 1, stdout: '' }),
+    }
+    await expect(resolveAccess('opencode-go', store)).resolves.toEqual({ token: 'cli-go', source: 'cli' })
+  })
+
   it('falls back to Command Code CLI apiKey then env aliases and ignores BYOK keys', async () => {
     const cli = memoryStore({
       '/home/user/.commandcode/auth.json': JSON.stringify({
