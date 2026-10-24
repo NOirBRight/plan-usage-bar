@@ -194,7 +194,7 @@ describe('pub-engine --version', () => {
     const result = await runCli([command], home)
     expect(result.code).toBe(0)
     expect(result.stderr).toBe('')
-    expect(packageJson.version).toBe('0.4.1')
+    expect(packageJson.version).toBe('0.4.2')
     expect(JSON.parse(result.stdout)).toEqual({
       version: packageJson.version,
       schemaVersion: 1,
