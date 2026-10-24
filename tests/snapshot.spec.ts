@@ -17,6 +17,7 @@ function memoryStore(files: Record<string, string>): CredentialStore {
   return {
     home: '/home/user',
     env: {},
+    run: async () => ({ code: 1, stdout: '' }),
     readFile: async (path: string) => {
       const value = files[path]
       if (value === undefined) {

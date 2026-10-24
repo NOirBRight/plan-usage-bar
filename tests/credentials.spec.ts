@@ -17,6 +17,7 @@ function memoryStore(files: Record<string, string>, env: NodeJS.ProcessEnv = {})
   return {
     home: '/home/user',
     env,
+    run: async () => ({ code: 1, stdout: '' }),
     readFile: async (path: string) => {
       const value = files[path]
       if (value === undefined) {
@@ -234,6 +235,7 @@ describe('resolveAccess', () => {
           stdout: JSON.stringify([
             { id: 'cred_old', integrationID: 'opencode-go', active: false, value: { type: 'key', key: 'old-go' } },
             { id: 'cred_new', integrationID: 'opencode-go', active: true, value: { type: 'key', key: 'db-go' } },
+            { id: 'cred_none', integrationID: 'opencode-go', value: { type: 'key', key: 'no-active-go' } },
           ]),
         }
       },
