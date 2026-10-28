@@ -34,6 +34,8 @@ export interface ProviderAccess {
   accountId?: string
   userId?: string
   plan?: string
+  /** CLI version the token belongs to, when the Provider's endpoint wants one. */
+  clientVersion?: string
 }
 
 export function defaultStore(): CredentialStore {
@@ -195,15 +197,116 @@ async function cursorFromCli(store: CredentialStore): Promise<ProviderAccess | u
   return { token, userId, source: 'cli' }
 }
 
-async function grokFromCli(store: CredentialStore): Promise<ProviderAccess | undefined> {
-  const official = await readJsonFile(store, join(store.home, '.grok', 'auth.json'))
-  if (!isRecord(official)) return undefined
+/** Grok's access token lives six hours; only the CLI may renew it (ADR 0013). */
+const GROK_RENEW_COMMAND = ['grok', 'models'] as const
+const GROK_EXPIRY_SKEW_MS = 2 * 60 * 1000
+
+interface GrokCredential {
+  token: string
+  expiresAt?: number
+  createdAt?: number
+}
+
+function grokExpiryOf(token: string): number | undefined {
+  const parts = token.split('.')
+  if (parts.length < 2) return undefined
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1]!, 'base64url').toString('utf8')) as unknown
+    if (!isRecord(payload)) return undefined
+    const exp = payload['exp']
+    return typeof exp === 'number' && Number.isFinite(exp) ? exp * 1000 : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function instantOf(value: unknown): number | undefined {
+  if (typeof value !== 'string' || value.length === 0) return undefined
+  const ms = Date.parse(value)
+  return Number.isFinite(ms) ? ms : undefined
+}
+
+/** Every entry the CLI keeps in auth.json; a logout leaves older ones behind. */
+function grokCredentials(official: unknown): GrokCredential[] {
+  if (!isRecord(official)) return []
+  const rows: GrokCredential[] = []
   for (const value of Object.values(official)) {
     if (!isRecord(value)) continue
     const token = value['key'] ?? value['accessToken']
-    if (typeof token === 'string' && token.length > 0) return { token, source: 'cli' }
+    if (typeof token !== 'string' || token.length === 0) continue
+    const expiresAt = instantOf(value['expires_at']) ?? grokExpiryOf(token)
+    const createdAt = instantOf(value['create_time'])
+    rows.push({
+      token,
+      ...expiresAt === undefined ? {} : { expiresAt },
+      ...createdAt === undefined ? {} : { createdAt },
+    })
   }
-  return undefined
+  return rows
+}
+
+/** Newest login wins, so a stale entry left behind cannot shadow the live one. */
+function newestGrokCredential(rows: readonly GrokCredential[]): GrokCredential | undefined {
+  let best: GrokCredential | undefined
+  for (const row of rows) {
+    if (best === undefined || grokRank(row) > grokRank(best)) best = row
+  }
+  return best
+}
+
+function grokRank(row: GrokCredential): number {
+  return row.expiresAt ?? row.createdAt ?? Number.NEGATIVE_INFINITY
+}
+
+function grokIsStale(row: GrokCredential, now: number): boolean {
+  return row.expiresAt !== undefined && row.expiresAt - GROK_EXPIRY_SKEW_MS <= now
+}
+
+function grokAuthPath(store: CredentialStore): string {
+  return join(store.home, '.grok', 'auth.json')
+}
+
+async function grokAuthFile(store: CredentialStore): Promise<GrokCredential | undefined> {
+  return newestGrokCredential(grokCredentials(await readJsonFile(store, grokAuthPath(store))))
+}
+
+/** Let the CLI renew its own token, then use whatever it wrote; never write the file ourselves. */
+async function renewedGrokCredential(
+  store: CredentialStore,
+  stale: GrokCredential,
+): Promise<GrokCredential> {
+  try {
+    await store.run([...GROK_RENEW_COMMAND])
+  } catch {
+    return stale
+  }
+  return await grokAuthFile(store) ?? stale
+}
+
+/** The version of the CLI whose client identifier the Grok billing endpoint expects. */
+async function grokClientVersion(store: CredentialStore): Promise<string | undefined> {
+  try {
+    const value = await readJsonFile(store, join(store.home, '.grok', 'version.json'))
+    if (!isRecord(value)) return undefined
+    const version = value['version']
+    return typeof version === 'string' && /^\d+\.\d+\.\d+$/u.test(version) ? version : undefined
+  } catch {
+    return undefined
+  }
+}
+
+async function grokFromCli(store: CredentialStore): Promise<ProviderAccess | undefined> {
+  const stored = await grokAuthFile(store)
+  if (stored === undefined) return undefined
+  const credential = grokIsStale(stored, Date.now())
+    ? await renewedGrokCredential(store, stored)
+    : stored
+  const version = await grokClientVersion(store)
+  return {
+    token: credential.token,
+    source: 'cli',
+    ...version === undefined ? {} : { clientVersion: version },
+  }
 }
 
 function xdgDataHome(store: CredentialStore): string {

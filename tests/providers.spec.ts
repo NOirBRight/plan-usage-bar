@@ -147,6 +147,18 @@ describe('Grok pull', () => {
     expect(parsed.remaining).toBe(0.99)
     expect(parsed.windows[0]?.resetLabel).toBe('Resets in 6d 16h')
   })
+
+  it('sends the CLI version the credential came from, else the current one', async () => {
+    const versions: unknown[] = []
+    const fetchImpl: FetchLike = async (url, init) => {
+      if (String(url).includes('billing?format=credits'))
+        versions.push((init.headers as Record<string, unknown>)['x-grok-client-version'])
+      return jsonResponse('grok-heavy.json')
+    }
+    await grok.pull({ token: 'grok-token', source: 'cli', clientVersion: '1.0.71' }, fetchImpl, now)
+    await grok.pull({ token: 'pasted-token', source: 'pub' }, fetchImpl, now)
+    expect(versions).toEqual(['1.0.71', '1.0.70'])
+  })
 })
 
 describe('Ollama Cloud pull', () => {
