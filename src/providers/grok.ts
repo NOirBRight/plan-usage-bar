@@ -60,11 +60,14 @@ function isSettingsPlan(value: unknown): string | undefined {
   return typeof plan === 'string' && plan.length > 0 ? plan : undefined
 }
 
+/** Used when the CLI home has no recorded version, e.g. a pasted token. */
+const FALLBACK_CLIENT_VERSION = '1.0.70'
+
 async function pull(access: ProviderAccess, fetchImpl: FetchLike, now: number): Promise<UsageFields> {
   const headers = {
     authorization: `Bearer ${access.token}`,
     accept: 'application/json',
-    'x-grok-client-version': '1.0.30',
+    'x-grok-client-version': access.clientVersion ?? FALLBACK_CLIENT_VERSION,
     'x-grok-client-identifier': 'grok-shell',
   }
   const body = await getJson(fetchImpl, 'https://cli-chat-proxy.grok.com/v1/billing?format=credits', headers)
