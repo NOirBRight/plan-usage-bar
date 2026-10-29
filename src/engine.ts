@@ -6,6 +6,7 @@ import {
   readOptional,
   resolveAccess,
   type CredentialStore,
+  type ProviderAccess,
 } from './credentials.ts'
 import { HttpError, type FetchLike } from './http.ts'
 import { ADAPTERS } from './providers/registry.ts'
@@ -120,7 +121,31 @@ async function readProvider(
     const usage = await adapter.pull(access, fetchImpl, now)
     return contractProvider({ ...base, ...usage, credentialSource: access.source })
   } catch (error) {
-    return { ...base, credentialSource: access.source, ...classifyFetchError(error) }
+    const renewed = await renewedAfterRejection(adapter, store, access, error)
+    if (renewed === undefined) return { ...base, credentialSource: access.source, ...classifyFetchError(error) }
+    try {
+      const usage = await adapter.pull(renewed, fetchImpl, now)
+      return contractProvider({ ...base, ...usage, credentialSource: renewed.source })
+    } catch (second) {
+      return { ...base, credentialSource: renewed.source, ...classifyFetchError(second) }
+    }
+  }
+}
+
+/** A rejected token can be stale even when the CLI's file says otherwise, so let its CLI renew once. */
+async function renewedAfterRejection(
+  adapter: ProviderAdapter,
+  store: CredentialStore,
+  access: ProviderAccess,
+  error: unknown,
+): Promise<ProviderAccess | undefined> {
+  if (adapter.renew === undefined) return undefined
+  if (!(error instanceof HttpError) || (error.status !== 401 && error.status !== 403)) return undefined
+  try {
+    const renewed = await adapter.renew(store)
+    return renewed === undefined || renewed.token === access.token ? undefined : renewed
+  } catch {
+    return undefined
   }
 }
 

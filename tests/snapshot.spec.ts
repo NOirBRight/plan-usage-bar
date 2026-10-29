@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { DEFAULT_SETTINGS } from '../src/snapshot.ts'
 import { applyPrimary, readSnapshot } from '../src/engine.ts'
 import type { CredentialStore } from '../src/credentials.ts'
+import type { FetchLike } from '../src/http.ts'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -426,5 +427,102 @@ describe('applyPrimary', () => {
     const next = applyPrimary(provider, 'other-models')
     expect(next.remaining).toBe(0)
     expect(next.windows.map(window => window.primary)).toEqual([false, true])
+  })
+})
+
+describe('Grok renewal after a rejected token', () => {
+  const authPath = '/home/user/.grok/auth.json'
+  const versionPath = '/home/user/.grok/version.json'
+
+  function grokOnlyStore(files: Record<string, string>) {
+    const commands: string[][] = []
+    const store: CredentialStore = {
+      home: '/home/user',
+      env: {},
+      run: async (command: readonly string[]) => {
+        commands.push([...command])
+        files[authPath] = JSON.stringify({ 'https://auth.x.ai::client': { key: 'fresh' } })
+        return { code: 0, stdout: '' }
+      },
+      readFile: async (path: string) => {
+        const value = files[path]
+        if (value === undefined) {
+          const error = new Error('ENOENT') as NodeJS.ErrnoException
+          error.code = 'ENOENT'
+          throw error
+        }
+        return value
+      },
+    }
+    return { store, commands }
+  }
+
+  const settings = {
+    remainingMode: true,
+    providers: [{ id: 'grok', enabled: true, pinned: true }],
+  }
+
+  it('asks the CLI once and retries with the token it wrote', async () => {
+    const files: Record<string, string> = {
+      [authPath]: JSON.stringify({ 'https://auth.x.ai::client': { key: 'stale' } }),
+      [versionPath]: JSON.stringify({ version: '1.0.74' }),
+    }
+    const { store, commands } = grokOnlyStore(files)
+    const versions: unknown[] = []
+    const fetchImpl: FetchLike = async (url, init) => {
+      const headers = init.headers as Record<string, string>
+      if (!String(url).includes('billing')) return new Response('{}', { status: 200 })
+      versions.push(headers['x-grok-client-version'])
+      return headers['authorization'] === 'Bearer fresh'
+        ? jsonResponse('grok-heavy.json')
+        : new Response('', { status: 401 })
+    }
+    const snapshot = await readSnapshot({
+      settings,
+      store,
+      fetch: fetchImpl,
+      now: () => Date.parse('2026-09-14T00:10:38.000Z'),
+      configDir: '/home/user/.config/pub',
+    })
+    const grok = snapshot.providers[0]!
+    expect(grok.error).toBeUndefined()
+    expect(grok.remaining).toBe(0.99)
+    expect(commands).toEqual([['grok', 'models']])
+    expect(versions).toEqual(['1.0.74', '1.0.74'])
+  })
+
+  it('reports the 401 when the renewed token is rejected too', async () => {
+    const { store, commands } = grokOnlyStore({
+      [authPath]: JSON.stringify({ 'https://auth.x.ai::client': { key: 'stale' } }),
+    })
+    const fetchImpl: FetchLike = async () => new Response('', { status: 401 })
+    const snapshot = await readSnapshot({
+      settings,
+      store,
+      fetch: fetchImpl,
+      now: () => Date.parse('2026-09-14T00:10:38.000Z'),
+      configDir: '/home/user/.config/pub',
+    })
+    const grok = snapshot.providers[0]!
+    expect(grok.errorKind).toBe('unauthorized')
+    expect(grok.error).toBe('HTTP 401')
+    // One renew, two pulls.
+    expect(commands).toEqual([['grok', 'models']])
+  })
+
+  it('does not spawn the CLI for a non-auth failure', async () => {
+    const { store, commands } = grokOnlyStore({
+      [authPath]: JSON.stringify({ 'https://auth.x.ai::client': { key: 'stale' } }),
+    })
+    const fetchImpl: FetchLike = async () => new Response('', { status: 429 })
+    const snapshot = await readSnapshot({
+      settings,
+      store,
+      fetch: fetchImpl,
+      now: () => Date.parse('2026-09-14T00:10:38.000Z'),
+      configDir: '/home/user/.config/pub',
+    })
+    expect(snapshot.providers[0]!.errorKind).toBe('rate-limit')
+    expect(commands).toEqual([])
   })
 })

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   parsePubCredentials,
   loadPubCredentials,
+  renewGrokAccess,
   resolveAccess,
   type CredentialStore,
 } from '../src/credentials.ts'
@@ -312,22 +313,20 @@ describe('parseSettings', () => {
   })
 })
 
-describe('Grok CLI token renewal', () => {
+describe('Grok credentials', () => {
   const authPath = '/home/user/.grok/auth.json'
   const versionPath = '/home/user/.grok/version.json'
 
-  function jwt(exp: number): string {
-    const header = Buffer.from(JSON.stringify({ alg: 'ES256' })).toString('base64url')
-    const payload = Buffer.from(JSON.stringify({ exp })).toString('base64url')
-    return `${header}.${payload}.sig`
-  }
-
-  function grokStore(files: Record<string, string>, renew?: (files: Record<string, string>) => void) {
+  function grokStore(
+    files: Record<string, string>,
+    renew?: (files: Record<string, string>) => void,
+    env: NodeJS.ProcessEnv = {},
+  ) {
     const state = { ...files }
     const commands: string[][] = []
     const store: CredentialStore = {
       home: '/home/user',
-      env: {},
+      env,
       run: async (command: readonly string[]) => {
         commands.push([...command])
         renew?.(state)
@@ -346,39 +345,12 @@ describe('Grok CLI token renewal', () => {
     return { store, state, commands }
   }
 
-  it('lets the CLI renew an expired token and reads what it wrote', async () => {
-    const expired = new Date(Date.now() - 60_000).toISOString()
-    const fresh = new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString()
-    const { store, state, commands } = grokStore({
-      [authPath]: JSON.stringify({ 'https://auth.x.ai::client': { key: 'old', expires_at: expired } }),
-    }, files => {
-      files[authPath] = JSON.stringify({ 'https://auth.x.ai::client': { key: 'new', expires_at: fresh } })
-    })
-    await expect(resolveAccess('grok', store)).resolves.toEqual({ token: 'new', source: 'cli' })
-    expect(commands).toEqual([['grok', 'models']])
-    expect(state[authPath]).toContain('new')
-  })
-
-  it('reuses a live token without spawning the CLI and reports its version', async () => {
-    const fresh = new Date(Date.now() + 60 * 60 * 1000).toISOString()
-    const { store, commands } = grokStore({
-      [authPath]: JSON.stringify({ 'https://auth.x.ai::client': { key: 'live', expires_at: fresh } }),
-      [versionPath]: JSON.stringify({ version: '1.0.71' }),
-    })
-    await expect(resolveAccess('grok', store)).resolves.toEqual({
-      token: 'live',
-      source: 'cli',
-      clientVersion: '1.0.71',
-    })
-    expect(commands).toEqual([])
-  })
-
-  it('picks the newest login when auth.json still holds an expired entry', async () => {
-    const expired = new Date(Date.now() - 60_000).toISOString()
+  it('resolves the newest login without spawning the CLI', async () => {
+    const old = new Date(Date.now() - 60_000).toISOString()
     const fresh = new Date(Date.now() + 60 * 60 * 1000).toISOString()
     const { store, commands } = grokStore({
       [authPath]: JSON.stringify({
-        'https://auth.x.ai::old': { key: 'old', expires_at: expired },
+        'https://auth.x.ai::old': { key: 'old', expires_at: old },
         'https://auth.x.ai::new': { key: 'new', expires_at: fresh },
       }),
     })
@@ -386,22 +358,45 @@ describe('Grok CLI token renewal', () => {
     expect(commands).toEqual([])
   })
 
-  it('reads expiry from the token when auth.json has no expires_at', async () => {
-    const past = Math.floor(Date.now() / 1000) - 60
-    const { store, commands } = grokStore({
-      [authPath]: JSON.stringify({ 'https://auth.x.ai::client': { key: jwt(past) } }),
-    }, files => {
-      files[authPath] = JSON.stringify({ 'https://auth.x.ai::client': { key: 'renewed' } })
+  it('reports the CLI version recorded beside auth.json', async () => {
+    const { store } = grokStore({
+      [authPath]: JSON.stringify({ 'https://auth.x.ai::client': { key: 'live' } }),
+      [versionPath]: JSON.stringify({ version: '1.0.71' }),
     })
-    await expect(resolveAccess('grok', store)).resolves.toEqual({ token: 'renewed', source: 'cli' })
+    await expect(resolveAccess('grok', store)).resolves.toEqual({
+      token: 'live',
+      source: 'cli',
+      clientVersion: '1.0.71',
+    })
+  })
+
+  it('lets the CLI renew the token and reads what it wrote', async () => {
+    const { store, state, commands } = grokStore({
+      [authPath]: JSON.stringify({ 'https://auth.x.ai::client': { key: 'stale' } }),
+    }, files => {
+      files[authPath] = JSON.stringify({ 'https://auth.x.ai::client': { key: 'fresh' } })
+    })
+    await expect(renewGrokAccess(store)).resolves.toEqual({ token: 'fresh', source: 'cli' })
     expect(commands).toEqual([['grok', 'models']])
+    expect(state[authPath]).toContain('fresh')
   })
 
   it('keeps the stored token when the CLI cannot renew it', async () => {
-    const expired = new Date(Date.now() - 60_000).toISOString()
     const { store } = grokStore({
-      [authPath]: JSON.stringify({ 'https://auth.x.ai::client': { key: 'stale', expires_at: expired } }),
+      [authPath]: JSON.stringify({ 'https://auth.x.ai::client': { key: 'stale' } }),
     })
-    await expect(resolveAccess('grok', store)).resolves.toEqual({ token: 'stale', source: 'cli' })
+    await expect(renewGrokAccess(store)).resolves.toEqual({ token: 'stale', source: 'cli' })
+  })
+
+  it('reads auth.json and version.json from GROK_HOME', async () => {
+    const { store } = grokStore({
+      '/opt/grok/auth.json': JSON.stringify({ 'https://auth.x.ai::client': { key: 'home-token' } }),
+      '/opt/grok/version.json': JSON.stringify({ version: '1.0.72' }),
+    }, undefined, { GROK_HOME: '/opt/grok' })
+    await expect(resolveAccess('grok', store)).resolves.toEqual({
+      token: 'home-token',
+      source: 'cli',
+      clientVersion: '1.0.72',
+    })
   })
 })

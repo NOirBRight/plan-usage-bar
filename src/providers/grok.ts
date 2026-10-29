@@ -1,4 +1,5 @@
 import type { ProviderAccess } from '../credentials.ts'
+import { renewGrokAccess } from '../credentials.ts'
 import { getJson, getJsonOptional, type FetchLike } from '../http.ts'
 import type { ProviderIdentity, ProviderSnapshot, WindowReport } from '../snapshot.ts'
 import { isRecord, remainingFromUsedPercent, resetLabel, isoInstant } from '../remaining.ts'
@@ -75,4 +76,4 @@ async function pull(access: ProviderAccess, fetchImpl: FetchLike, now: number): 
   return parseGrokUsage(body, now, isSettingsPlan(settings))
 }
 
-export const grok: ProviderAdapter = { identity, pull }
+export const grok: ProviderAdapter = { identity, pull, renew: renewGrokAccess }
